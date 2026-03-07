@@ -10,11 +10,9 @@ then the server hosting your app is blocking embedding. Fix it as follows.
 
 ## 1. Headers added in this project
 
-Embedding is allowed **only for the booking page** (`/book/*`), not for the rest of the app (dashboard, auth, etc.).
-
-- **`vercel.json`** – Sets `Content-Security-Policy: frame-ancestors *` for `/book/*` only (Vercel).
-- **`netlify.toml`** – Same for **Netlify** (`/book/*` only).
-- **`public/_headers`** – Same for hosts that use this file (`/book/*` only).
+- **`vercel.json`** – Sets `Content-Security-Policy: frame-ancestors *` for all routes (Vercel). Path-only rules often don’t apply on SPAs, so the header is applied site-wide.
+- **`netlify.toml`** – Same idea for **Netlify** (currently scoped to `/book/*`).
+- **`public/_headers`** – For hosts that use this file.
 
 Redeploy after these files are in place so the new headers are active.
 
@@ -22,12 +20,12 @@ Redeploy after these files are in place so the new headers are active.
 
 ## 2. If the error persists: your host is setting X-Frame-Options
 
-Some platforms add `X-Frame-Options: sameorigin` by default. You must **turn that off or allow framing** in the host’s settings; the app cannot override it from code alone.
+If you **redeployed** and the iframe is still blocked, the host is probably sending **`X-Frame-Options: sameorigin`** itself. When that header is present, browsers block embedding even if we send `Content-Security-Policy: frame-ancestors *`. You have to **turn off or change that header in the host’s dashboard** (the app cannot remove it from code).
 
-- **Vercel** – Usually does not set X-Frame-Options; the `vercel.json` headers above are often enough.
-- **Netlify** – Same; `netlify.toml` or `_headers` should be enough.
-- **Cloudflare Pages** – In the dashboard, check **Settings → Rules** or **Transform Rules** for security headers and remove or change `X-Frame-Options`, or add a response header that sets `Content-Security-Policy: frame-ancestors *`.
-- **Other hosts** – Look for “Security headers”, “Custom headers”, or “X-Frame-Options” and either disable X-Frame-Options or add `Content-Security-Policy: frame-ancestors *` (and ensure X-Frame-Options is not set to `sameorigin`).
+- **Vercel** – Project → **Settings** → **Security** (or **Headers**). If you see “X-Frame-Options” or “Clickjacking protection”, disable it or allow framing.
+- **Netlify** – **Site settings** → **Build & deploy** → **Post processing** → **Security headers** – disable “X-Frame-Options” or set a custom header that allows framing.
+- **Cloudflare** – **Rules** → **Transform Rules** → **Modify Response Header** – delete the `X-Frame-Options` header for your domain, or add a rule that sets it only for paths you don’t want embedded.
+- **Other hosts** – Look for “Security headers”, “Custom headers”, or “Clickjacking / X-Frame-Options” and disable or override it for your site.
 
 ---
 

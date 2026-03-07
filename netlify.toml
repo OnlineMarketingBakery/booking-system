@@ -1,5 +1,5 @@
-# Allow only the booking page to be embedded in iframes (for the Embed feature).
+# Allow the app to be embedded in iframes (for the Embed feature). Applied to all routes so it works with SPA routing.
 [[headers]]
-  for = "/book/*"
+  for = "/*"
   [headers.values]
     Content-Security-Policy = "frame-ancestors *"
