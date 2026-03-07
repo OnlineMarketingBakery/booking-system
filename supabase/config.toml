@@ -1,0 +1,34 @@
+project_id = "pgcvqaexvnwwskdhooly"
+
+[functions.create-booking-checkout]
+verify_jwt = false
+
+[functions.verify-booking-payment]
+verify_jwt = false
+
+[functions.send-booking-email]
+verify_jwt = false
+
+[functions.create-staff-account]
+verify_jwt = false
+
+[functions.admin-delete-user]
+verify_jwt = false
+
+[functions.seed-test-data]
+verify_jwt = false
+
+[functions.create-salon-owner]
+verify_jwt = false
+
+[functions.google-auth-callback]
+verify_jwt = false
+
+[functions.sync-booking-to-gcal]
+verify_jwt = false
+
+[functions.fetch-gcal-events]
+verify_jwt = false
+
+[functions.auth-custom]
+verify_jwt = false
