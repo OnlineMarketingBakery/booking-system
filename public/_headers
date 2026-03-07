@@ -1,0 +1,3 @@
+# Allow only the booking page to be embedded in iframes (for the Embed feature).
+/book/*
+  Content-Security-Policy: frame-ancestors *

@@ -1,0 +1,5 @@
+# Allow only the booking page to be embedded in iframes (for the Embed feature).
+[[headers]]
+  for = "/book/*"
+  [headers.values]
+    Content-Security-Policy = "frame-ancestors *"
