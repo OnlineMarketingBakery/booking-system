@@ -17,7 +17,10 @@ Deno.serve(async (req) => {
   const GOOGLE_CLIENT_SECRET = Deno.env.get("GOOGLE_CLIENT_SECRET")!;
   const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
   const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-  const REDIRECT_URI = `${SUPABASE_URL}/functions/v1/google-auth-callback`;
+  // When set, Google will show your domain ("Continue to yourdomain.com") instead of the Supabase project ID.
+  // You must add this exact URL in Google Cloud OAuth client and host a redirect page there that forwards to the Supabase function.
+  const REDIRECT_URI = Deno.env.get("GOOGLE_OAUTH_REDIRECT_URI")?.trim() ||
+    `${SUPABASE_URL}/functions/v1/google-auth-callback`;
 
   // Step 1: Start OAuth — redirect user to Google
   if (action === "login") {

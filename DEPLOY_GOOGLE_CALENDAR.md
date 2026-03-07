@@ -43,6 +43,30 @@ npx supabase functions deploy sync-booking-to-gcal
 
 ---
 
-## 4. Try again
+## 4. (Optional) Show your domain instead of Supabase project ID on Google
+
+When users connect Google Calendar, Google shows "Continue to [redirect URI domain]". By default that is your Supabase project URL. To show **your app’s domain** (e.g. "Continue to booking.onlinemarketingbakery.nl"):
+
+1. **Deploy your app** to your domain (e.g. `https://booking.onlinemarketingbakery.nl`). The app includes the route `/auth/google-callback`, which forwards to the Supabase function.
+
+2. **In Google Cloud** (Booking System project) → **APIs & Services** → **Credentials** → your OAuth client → **Authorized redirect URIs**, add:
+   - `https://booking.onlinemarketingbakery.nl/auth/google-callback`  
+   (use your real app URL.)
+
+3. **In Supabase**, set the same URL so the Edge Function uses it when sending users to Google:
+   ```bash
+   npx supabase secrets set GOOGLE_OAUTH_REDIRECT_URI="https://booking.onlinemarketingbakery.nl/auth/google-callback"
+   ```
+
+4. **Redeploy the callback function:**
+   ```bash
+   npx supabase functions deploy google-auth-callback
+   ```
+
+After this, the Google "Select an account" screen will show your domain instead of the Supabase project ID. If you don’t set `GOOGLE_OAUTH_REDIRECT_URI`, the flow still works and uses the Supabase URL.
+
+---
+
+## 5. Try again
 
 In your app, go to **Settings** (or **Calendar**) and click **Connect Google Calendar** again. The redirect should hit the deployed function and no longer return "function not found".
