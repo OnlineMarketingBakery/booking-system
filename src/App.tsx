@@ -32,8 +32,8 @@ const App = () => (
       <BrowserRouter>
         <AuthProvider>
           <Routes>
-            <Route path="/" element={<Index />} />
-            <Route path="/auth" element={<Auth />} />
+            {/* <Route path="/" element={<Index />} /> */}
+            <Route path="/" element={<Auth />} />
             <Route path="/book/:slug" element={<BookingPage />} />
             <Route path="/book/success" element={<ThankYouPage />} />
             <Route path="/book/cancel" element={<BookingPage />} />

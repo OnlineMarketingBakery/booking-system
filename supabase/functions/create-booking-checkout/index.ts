@@ -79,9 +79,7 @@ serve(async (req) => {
 
   try {
     const stripeKey = Deno.env.get("STRIPE_SECRET_KEY");
-    if (!stripeKey) throw new Error("STRIPE_SECRET_KEY is not set");
-
-    const stripe = new Stripe(stripeKey, { apiVersion: "2025-08-27.basil" });
+    const stripe = stripeKey ? new Stripe(stripeKey, { apiVersion: "2025-08-27.basil" }) : null;
 
     const supabaseClient = createClient(
       Deno.env.get("SUPABASE_URL") ?? "",
@@ -182,7 +180,8 @@ serve(async (req) => {
 
     const currency = (servicesData[0] as any).currency || "usd";
 
-    if (totalPriceCents <= 0) {
+    // Free path: zero price, or Stripe not configured — confirm booking and return success
+    if (totalPriceCents <= 0 || !stripe) {
       for (const id of bookingIds) {
         await supabaseClient
           .from("bookings")
@@ -198,7 +197,6 @@ serve(async (req) => {
         });
       } catch (e) { console.error("Email send failed:", e); }
 
-      // Sync each booking to Google Calendar
       for (const id of bookingIds) {
         try {
           await fetch(`${Deno.env.get("SUPABASE_URL")}/functions/v1/sync-booking-to-gcal`, {
@@ -215,6 +213,7 @@ serve(async (req) => {
       );
     }
 
+    // Stripe path: paid booking with Stripe configured
     const origin = req.headers.get("origin") || Deno.env.get("APP_URL") || "http://localhost:8080";
     const lineItems = servicesData.map((service) => ({
       price_data: {

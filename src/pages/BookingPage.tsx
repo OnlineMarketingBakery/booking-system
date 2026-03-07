@@ -494,7 +494,8 @@ export default function BookingPage() {
 
                   <Button type="submit" className="w-full" disabled={booking}>
                     {booking && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                    {totalPrice > 0 ? `Pay $${totalPrice.toFixed(2)} & Book` : "Confirm Booking"}
+                    {totalPrice > 0 ? `Book Now` : "Confirm Booking"}
+                    {/* {totalPrice > 0 ? `Pay $${totalPrice.toFixed(2)} & Book` : "Confirm Booking"} */}
                   </Button>
                   <Button type="button" variant="ghost" className="w-full" onClick={() => setStep("time")}>← Back</Button>
                 </form>
