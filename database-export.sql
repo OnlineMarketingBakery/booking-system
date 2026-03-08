@@ -310,6 +310,7 @@ CREATE POLICY "Public can view active locations" ON public.locations FOR SELECT 
 -- ── services ──
 CREATE POLICY "Org owners can manage services" ON public.services FOR ALL USING (organization_id IN (SELECT id FROM organizations WHERE owner_id = auth.uid()));
 CREATE POLICY "Public can view active services" ON public.services FOR SELECT USING (is_active = true);
+CREATE POLICY "Anyone can view services that have bookings" ON public.services FOR SELECT USING (id IN (SELECT service_id FROM public.bookings));
 
 -- ── staff ──
 CREATE POLICY "Org owners can manage staff" ON public.staff FOR ALL USING (organization_id IN (SELECT id FROM organizations WHERE owner_id = auth.uid()));

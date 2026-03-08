@@ -37,6 +37,7 @@ export default function Services() {
         .from("services")
         .select("*")
         .eq("organization_id", organization!.id)
+        .eq("is_active", true)
         .order("created_at");
       if (error) throw error;
       return data;
@@ -61,10 +62,20 @@ export default function Services() {
 
   const deleteService = useMutation({
     mutationFn: async (id: string) => {
-      const { error } = await supabase.from("services").delete().eq("id", id);
+      // Soft-delete: hide from lists and booking flow; existing bookings still show this service
+      const { error } = await supabase.from("services").update({ is_active: false }).eq("id", id);
       if (error) throw error;
     },
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["services"] }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["services"] });
+      toast({ title: "Service removed", description: "It won't appear for new bookings; existing bookings still show it." });
+    },
+    onError: (err: unknown) =>
+      toast({
+        title: "Error",
+        description: err instanceof Error ? err.message : "Could not remove service.",
+        variant: "destructive",
+      }),
   });
 
   const [currency, setCurrency] = useState("usd");
