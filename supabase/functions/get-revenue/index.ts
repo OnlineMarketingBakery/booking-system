@@ -17,9 +17,7 @@ serve(async (req) => {
 
   try {
     const stripeKey = Deno.env.get("STRIPE_SECRET_KEY");
-    if (!stripeKey) throw new Error("STRIPE_SECRET_KEY is not set");
-
-    const stripe = new Stripe(stripeKey, { apiVersion: "2025-08-27.basil" });
+    const stripe = stripeKey ? new Stripe(stripeKey, { apiVersion: "2025-08-27.basil" }) : null;
 
     // Authenticate the user via custom JWT
     const authHeader = req.headers.get("Authorization");
@@ -68,17 +66,19 @@ serve(async (req) => {
       totalRevenue += Number((b.services as any)?.price || 0);
     }
 
-    // Also query Stripe directly for actual charges
+    // Query Stripe only when configured
     let stripeRevenue = 0;
-    try {
-      const charges = await stripe.charges.list({ limit: 100 });
-      for (const charge of charges.data) {
-        if (charge.paid && !charge.refunded) {
-          stripeRevenue += charge.amount;
+    if (stripe) {
+      try {
+        const charges = await stripe.charges.list({ limit: 100 });
+        for (const charge of charges.data) {
+          if (charge.paid && !charge.refunded) {
+            stripeRevenue += charge.amount;
+          }
         }
+      } catch (e) {
+        console.error("Error fetching Stripe charges:", e);
       }
-    } catch (e) {
-      console.error("Error fetching Stripe charges:", e);
     }
 
     return new Response(

@@ -203,6 +203,31 @@ AS $$
   SELECT DISTINCT s.organization_id FROM public.staff s WHERE s.user_id = _user_id
 $$;
 
+-- Helper functions to avoid RLS recursion when checking "has bookings" (used in locations/services/staff policies)
+CREATE OR REPLACE FUNCTION public.get_location_ids_with_bookings()
+RETURNS SETOF UUID
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path TO 'public'
+AS $$ SELECT DISTINCT location_id FROM public.bookings $$;
+
+CREATE OR REPLACE FUNCTION public.get_service_ids_with_bookings()
+RETURNS SETOF UUID
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path TO 'public'
+AS $$ SELECT DISTINCT service_id FROM public.bookings $$;
+
+CREATE OR REPLACE FUNCTION public.get_staff_ids_with_bookings()
+RETURNS SETOF UUID
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path TO 'public'
+AS $$ SELECT DISTINCT staff_id FROM public.bookings $$;
+
 CREATE OR REPLACE FUNCTION public.create_organization_with_role(_name TEXT, _slug TEXT, _owner_id UUID)
 RETURNS UUID
 LANGUAGE plpgsql
@@ -306,18 +331,18 @@ CREATE POLICY "Super admins can view all orgs" ON public.organizations FOR SELEC
 -- ── locations ──
 CREATE POLICY "Org owners can manage locations" ON public.locations FOR ALL USING (organization_id IN (SELECT id FROM organizations WHERE owner_id = auth.uid()));
 CREATE POLICY "Public can view active locations" ON public.locations FOR SELECT USING (is_active = true);
-CREATE POLICY "Anyone can view locations that have bookings" ON public.locations FOR SELECT USING (id IN (SELECT location_id FROM public.bookings));
+CREATE POLICY "Anyone can view locations that have bookings" ON public.locations FOR SELECT USING (id IN (SELECT public.get_location_ids_with_bookings()));
 
 -- ── services ──
 CREATE POLICY "Org owners can manage services" ON public.services FOR ALL USING (organization_id IN (SELECT id FROM organizations WHERE owner_id = auth.uid()));
 CREATE POLICY "Public can view active services" ON public.services FOR SELECT USING (is_active = true);
-CREATE POLICY "Anyone can view services that have bookings" ON public.services FOR SELECT USING (id IN (SELECT service_id FROM public.bookings));
+CREATE POLICY "Anyone can view services that have bookings" ON public.services FOR SELECT USING (id IN (SELECT public.get_service_ids_with_bookings()));
 
 -- ── staff ──
 CREATE POLICY "Org owners can manage staff" ON public.staff FOR ALL USING (organization_id IN (SELECT id FROM organizations WHERE owner_id = auth.uid()));
 CREATE POLICY "Authenticated users can view staff in their org" ON public.staff FOR SELECT USING (organization_id IN (SELECT get_user_organization_ids(auth.uid())));
 CREATE POLICY "Staff can view themselves" ON public.staff FOR SELECT USING (user_id = auth.uid());
-CREATE POLICY "Anyone can view staff that have bookings" ON public.staff FOR SELECT USING (id IN (SELECT staff_id FROM public.bookings));
+CREATE POLICY "Anyone can view staff that have bookings" ON public.staff FOR SELECT USING (id IN (SELECT public.get_staff_ids_with_bookings()));
 
 -- ── staff_locations ──
 CREATE POLICY "Org owners can manage staff_locations" ON public.staff_locations FOR ALL USING (staff_id IN (SELECT s.id FROM staff s WHERE s.organization_id IN (SELECT id FROM organizations WHERE owner_id = auth.uid())));
