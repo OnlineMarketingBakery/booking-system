@@ -79,7 +79,7 @@ export default function Customers() {
                   <TableHead>Name</TableHead>
                   <TableHead>Contact</TableHead>
                   <TableHead className="text-center">Bookings</TableHead>
-                  <TableHead>Last Visit</TableHead>
+                  <TableHead>Visit</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>

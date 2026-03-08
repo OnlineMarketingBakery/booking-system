@@ -88,7 +88,9 @@ export default function SettingsPage() {
     <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-bold tracking-tight">Settings</h1>
-        <p className="text-muted-foreground">Manage your salon settings</p>
+        <p className="text-muted-foreground">
+          {organization ? "Manage your salon settings" : "Manage your account"}
+        </p>
       </div>
 
       <Card>
@@ -135,107 +137,111 @@ export default function SettingsPage() {
         </CardContent>
       </Card>
 
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Settings className="h-5 w-5 text-primary" />
-            Organization
-          </CardTitle>
-          <CardDescription>Your salon details</CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-3 text-sm">
-          <div className="flex items-center gap-2">
-            <span className="font-medium">Name:</span>
-            {editingName ? (
-              <form
-                className="flex items-center gap-2 flex-1"
-                onSubmit={async (e) => {
-                  e.preventDefault();
-                  if (!newName.trim() || !organization) return;
-                  setSaving(true);
-                  const { error } = await supabase
-                    .from("organizations")
-                    .update({ name: newName.trim() })
-                    .eq("id", organization.id);
-                  setSaving(false);
-                  if (error) {
-                    toast({ title: "Error", description: error.message, variant: "destructive" });
-                  } else {
-                    toast({ title: "Salon name updated" });
-                    queryClient.invalidateQueries({ queryKey: ["organization"] });
-                    setEditingName(false);
-                  }
-                }}
-              >
-                <Input
-                  value={newName}
-                  onChange={(e) => setNewName(e.target.value)}
-                  className="h-8 max-w-[220px]"
-                  required
-                  minLength={2}
-                  maxLength={100}
-                  autoFocus
-                />
-                <Button type="submit" size="sm" disabled={saving}>
-                  {saving && <Loader2 className="h-3 w-3 animate-spin mr-1" />}
-                  Save
-                </Button>
-                <Button type="button" size="sm" variant="ghost" onClick={() => setEditingName(false)}>
-                  Cancel
-                </Button>
-              </form>
-            ) : (
-              <>
-                <span>{organization?.name}</span>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-6 w-6"
-                  onClick={() => { setNewName(organization?.name || ""); setEditingName(true); }}
-                >
-                  <Pencil className="h-3 w-3" />
-                </Button>
-              </>
-            )}
-          </div>
-          <p><span className="font-medium">Slug:</span> {organization?.slug}</p>
-          <p><span className="font-medium">Stripe:</span> {organization?.stripe_account_id || "Not connected"}</p>
-        </CardContent>
-      </Card>
+      {organization && (
+        <>
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Settings className="h-5 w-5 text-primary" />
+                Organization
+              </CardTitle>
+              <CardDescription>Your salon details</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-3 text-sm">
+              <div className="flex items-center gap-2">
+                <span className="font-medium">Name:</span>
+                {editingName ? (
+                  <form
+                    className="flex items-center gap-2 flex-1"
+                    onSubmit={async (e) => {
+                      e.preventDefault();
+                      if (!newName.trim() || !organization) return;
+                      setSaving(true);
+                      const { error } = await supabase
+                        .from("organizations")
+                        .update({ name: newName.trim() })
+                        .eq("id", organization.id);
+                      setSaving(false);
+                      if (error) {
+                        toast({ title: "Error", description: error.message, variant: "destructive" });
+                      } else {
+                        toast({ title: "Salon name updated" });
+                        queryClient.invalidateQueries({ queryKey: ["organization"] });
+                        setEditingName(false);
+                      }
+                    }}
+                  >
+                    <Input
+                      value={newName}
+                      onChange={(e) => setNewName(e.target.value)}
+                      className="h-8 max-w-[220px]"
+                      required
+                      minLength={2}
+                      maxLength={100}
+                      autoFocus
+                    />
+                    <Button type="submit" size="sm" disabled={saving}>
+                      {saving && <Loader2 className="h-3 w-3 animate-spin mr-1" />}
+                      Save
+                    </Button>
+                    <Button type="button" size="sm" variant="ghost" onClick={() => setEditingName(false)}>
+                      Cancel
+                    </Button>
+                  </form>
+                ) : (
+                  <>
+                    <span>{organization?.name}</span>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-6 w-6"
+                      onClick={() => { setNewName(organization?.name || ""); setEditingName(true); }}
+                    >
+                      <Pencil className="h-3 w-3" />
+                    </Button>
+                  </>
+                )}
+              </div>
+              <p><span className="font-medium">Slug:</span> {organization?.slug}</p>
+              <p><span className="font-medium">Stripe:</span> {organization?.stripe_account_id || "Not connected"}</p>
+            </CardContent>
+          </Card>
 
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Calendar className="h-5 w-5 text-primary" />
-            Google Calendar Integration
-          </CardTitle>
-          <CardDescription>Sync bookings and block availability from your Google Calendar</CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="flex items-center gap-3">
-            {gcalConnected ? (
-              <>
-                <Badge className="bg-primary/10 text-primary border-primary/30 gap-1">
-                  <CheckCircle2 className="h-3 w-3" /> Connected
-                </Badge>
-                <Button variant="outline" size="sm" onClick={handleDisconnect} className="text-destructive gap-1">
-                  <XCircle className="h-3 w-3" /> Disconnect
-                </Button>
-              </>
-            ) : (
-              <Button onClick={handleConnectGoogle} className="gap-2">
-                <ExternalLink className="h-4 w-4" />
-                Connect Google Calendar
-              </Button>
-            )}
-          </div>
-          <p className="text-xs text-muted-foreground">
-            {gcalConnected
-              ? "Bookings will automatically appear in your Google Calendar. Your Google Calendar events will block availability in the booking system."
-              : "Connect your Google account to automatically sync bookings and use your calendar events to block availability."}
-          </p>
-        </CardContent>
-      </Card>
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Calendar className="h-5 w-5 text-primary" />
+                Google Calendar Integration
+              </CardTitle>
+              <CardDescription>Sync bookings and block availability from your Google Calendar</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="flex items-center gap-3">
+                {gcalConnected ? (
+                  <>
+                    <Badge className="bg-primary/10 text-primary border-primary/30 gap-1">
+                      <CheckCircle2 className="h-3 w-3" /> Connected
+                    </Badge>
+                    <Button variant="outline" size="sm" onClick={handleDisconnect} className="text-destructive gap-1">
+                      <XCircle className="h-3 w-3" /> Disconnect
+                    </Button>
+                  </>
+                ) : (
+                  <Button onClick={handleConnectGoogle} className="gap-2">
+                    <ExternalLink className="h-4 w-4" />
+                    Connect Google Calendar
+                  </Button>
+                )}
+              </div>
+              <p className="text-xs text-muted-foreground">
+                {gcalConnected
+                  ? "Bookings will automatically appear in your Google Calendar. Your Google Calendar events will block availability in the booking system."
+                  : "Connect your Google account to automatically sync bookings and use your calendar events to block availability."}
+              </p>
+            </CardContent>
+          </Card>
+        </>
+      )}
     </div>
   );
 }

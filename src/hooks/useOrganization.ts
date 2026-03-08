@@ -10,6 +10,14 @@ export function useOrganization() {
     queryFn: async () => {
       if (!user) return null;
 
+      // Super admin must not have their own salon (platform admin only)
+      const { data: roles } = await supabase
+        .from("user_roles")
+        .select("role")
+        .eq("user_id", user.id);
+      const isSuperAdmin = roles?.some((r) => r.role === "super_admin") ?? false;
+      if (isSuperAdmin) return null;
+
       // Owner: fetch org directly
       const { data: ownedOrg } = await supabase
         .from("organizations")
@@ -43,6 +51,7 @@ export function useOrganization() {
   const createOrganization = useMutation({
     mutationFn: async ({ name, slug }: { name: string; slug: string }) => {
       if (!user) throw new Error("Not authenticated");
+      if (hasRole("super_admin")) throw new Error("Super admins cannot create a salon. Use the Admin Panel to add salon owners.");
 
       const { data, error } = await supabase.rpc("create_organization_with_role", {
         _name: name,

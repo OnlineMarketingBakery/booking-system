@@ -40,8 +40,8 @@ const ownerNavItems = [
 ];
 
 const adminNavItems = [
-  { title: "Overview", url: "/dashboard", icon: LayoutDashboard },
-  { title: "Admin Panel", url: "/dashboard/admin", icon: Shield },
+  // { title: "Overview", url: "/dashboard", icon: LayoutDashboard },
+  { title: "Admin Panel", url: "/dashboard", icon: Shield },
   { title: "Settings", url: "/dashboard/settings", icon: Settings },
 ];
 

@@ -94,9 +94,12 @@ export default function SuperAdminDashboard() {
       if (staffRes.error) throw staffRes.error;
 
       const profileIds = new Set((profilesRes.data || []).map((p) => p.id));
+      const superAdminIds = new Set(
+        (rolesRes.data || []).filter((r) => r.role === "super_admin").map((r) => r.user_id)
+      );
       const activeOwnerIds = new Set(
         (rolesRes.data || [])
-          .filter((r) => r.role === "salon_owner" && profileIds.has(r.user_id))
+          .filter((r) => r.role === "salon_owner" && profileIds.has(r.user_id) && !superAdminIds.has(r.user_id))
           .map((r) => r.user_id)
       );
 
@@ -122,8 +125,10 @@ export default function SuperAdminDashboard() {
 
       const totalStaff = (staffRes.data || []).filter((s) => activeOrgSet.has(s.organization_id)).length;
 
+      const totalUsersExcludingSuperAdmin = (profilesRes.data || []).filter((p) => !superAdminIds.has(p.id)).length;
+
       return {
-        totalUsers: profilesRes.count ?? 0,
+        totalUsers: totalUsersExcludingSuperAdmin,
         totalOrgs: activeOrgIds.length,
         totalBookings: bookingsCount ?? 0,
         totalStaff,
@@ -176,11 +181,13 @@ export default function SuperAdminDashboard() {
   });
 
   const statCards = [
-    { title: "Total Users", value: users.length, icon: Users },
+    { title: "Total Users", value: platformStats?.totalUsers ?? users.filter((u) => !u.roles.includes("super_admin")).length, icon: Users },
     { title: "Organizations", value: platformStats?.totalOrgs ?? 0, icon: Building2 },
     { title: "Total Bookings", value: platformStats?.totalBookings ?? 0, icon: CalendarDays },
     { title: "Total Staff", value: platformStats?.totalStaff ?? 0, icon: Shield },
   ];
+
+  const usersExcludingSuperAdmin = users.filter((u) => !u.roles.includes("super_admin"));
 
   if (isLoading) {
     return (
@@ -193,8 +200,8 @@ export default function SuperAdminDashboard() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-bold tracking-tight">Super Admin Dashboard</h1>
-        <p className="text-muted-foreground">Manage all salon owners and platform activity</p>
+        <h1 className="text-2xl font-bold tracking-tight">Admin Dashboard</h1>
+        {/* <p className="text-muted-foreground">Manage all salon owners and platform activity</p> */}
       </div>
 
       <Tabs defaultValue="overview">
@@ -258,14 +265,14 @@ export default function SuperAdminDashboard() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {users.length === 0 ? (
+                  {usersExcludingSuperAdmin.length === 0 ? (
                     <TableRow>
                       <TableCell colSpan={6} className="text-center text-muted-foreground py-6">
                         No users yet
                       </TableCell>
                     </TableRow>
                   ) : (
-                    users.map((u) => (
+                    usersExcludingSuperAdmin.map((u) => (
                       <TableRow key={u.id}>
                         <TableCell className="font-medium">{u.full_name || "—"}</TableCell>
                         <TableCell className="text-muted-foreground">{u.email}</TableCell>

@@ -1,12 +1,15 @@
 import { useQuery } from "@tanstack/react-query";
+import { Link } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { useOrganization } from "@/hooks/useOrganization";
+import { useAuth } from "@/contexts/AuthContext";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { ChartContainer, ChartTooltip, ChartTooltipContent } from "@/components/ui/chart";
 import { PieChart, Pie, Cell } from "recharts";
-import { CalendarDays, DollarSign, Users, TrendingUp, Loader2 } from "lucide-react";
+import { CalendarDays, DollarSign, Users, TrendingUp, Loader2, Shield } from "lucide-react";
 import { OnboardingWizard } from "@/components/OnboardingWizard";
 import { format } from "date-fns";
 
@@ -30,6 +33,7 @@ const STATUS_COLORS: Record<string, string> = {
 
 export default function Overview() {
   const { organization, isLoading: orgLoading } = useOrganization();
+  const { hasRole } = useAuth();
 
   const { data: stats, isLoading: statsLoading } = useQuery({
     queryKey: ["dashboard-overview", organization?.id],
@@ -98,7 +102,25 @@ export default function Overview() {
   });
 
   if (orgLoading) return null;
-  if (!organization) return <OnboardingWizard />;
+  if (!organization) {
+    if (hasRole("super_admin")) {
+      return (
+        <div className="flex flex-col items-center justify-center py-16 text-center">
+          <div className="rounded-full bg-primary/10 p-4 mb-4">
+            <Shield className="h-10 w-10 text-primary" />
+          </div>
+          <h2 className="text-xl font-semibold mb-2">Platform administrator</h2>
+          <p className="text-muted-foreground max-w-sm mb-6">
+            You manage the platform. Super admins do not have their own salon. Use the Admin Panel to manage salon owners and organizations.
+          </p>
+          <Button asChild>
+            <Link to="/dashboard/admin">Open Admin Panel</Link>
+          </Button>
+        </div>
+      );
+    }
+    return <OnboardingWizard />;
+  }
 
   const cards = [
     { title: "Revenue Collected", value: `$${(revenueData?.stripe_revenue ?? 0).toFixed(2)}`, icon: DollarSign, color: "text-accent-foreground" },

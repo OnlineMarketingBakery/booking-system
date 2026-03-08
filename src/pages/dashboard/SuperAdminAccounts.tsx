@@ -59,13 +59,17 @@ export default function SuperAdminAccounts() {
   const { data: owners = [], isLoading } = useQuery({
     queryKey: ["admin-salon-owners"],
     queryFn: async () => {
-      const { data: roles, error: rolesErr } = await supabase
-        .from("user_roles")
-        .select("user_id")
-        .eq("role", "salon_owner");
-      if (rolesErr) throw rolesErr;
+      const [rolesRes, superAdminRes] = await Promise.all([
+        supabase.from("user_roles").select("user_id").eq("role", "salon_owner"),
+        supabase.from("user_roles").select("user_id").eq("role", "super_admin"),
+      ]);
+      if (rolesRes.error) throw rolesRes.error;
+      if (superAdminRes.error) throw superAdminRes.error;
 
-      const ownerIds = (roles || []).map((r) => r.user_id);
+      const superAdminIds = new Set((superAdminRes.data || []).map((r) => r.user_id));
+      const ownerIds = (rolesRes.data || [])
+        .map((r) => r.user_id)
+        .filter((id) => !superAdminIds.has(id));
       if (ownerIds.length === 0) return [];
 
       const [profilesRes, orgsRes] = await Promise.all([
