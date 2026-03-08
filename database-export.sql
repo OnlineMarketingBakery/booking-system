@@ -306,6 +306,7 @@ CREATE POLICY "Super admins can view all orgs" ON public.organizations FOR SELEC
 -- ── locations ──
 CREATE POLICY "Org owners can manage locations" ON public.locations FOR ALL USING (organization_id IN (SELECT id FROM organizations WHERE owner_id = auth.uid()));
 CREATE POLICY "Public can view active locations" ON public.locations FOR SELECT USING (is_active = true);
+CREATE POLICY "Anyone can view locations that have bookings" ON public.locations FOR SELECT USING (id IN (SELECT location_id FROM public.bookings));
 
 -- ── services ──
 CREATE POLICY "Org owners can manage services" ON public.services FOR ALL USING (organization_id IN (SELECT id FROM organizations WHERE owner_id = auth.uid()));
@@ -316,6 +317,7 @@ CREATE POLICY "Anyone can view services that have bookings" ON public.services F
 CREATE POLICY "Org owners can manage staff" ON public.staff FOR ALL USING (organization_id IN (SELECT id FROM organizations WHERE owner_id = auth.uid()));
 CREATE POLICY "Authenticated users can view staff in their org" ON public.staff FOR SELECT USING (organization_id IN (SELECT get_user_organization_ids(auth.uid())));
 CREATE POLICY "Staff can view themselves" ON public.staff FOR SELECT USING (user_id = auth.uid());
+CREATE POLICY "Anyone can view staff that have bookings" ON public.staff FOR SELECT USING (id IN (SELECT staff_id FROM public.bookings));
 
 -- ── staff_locations ──
 CREATE POLICY "Org owners can manage staff_locations" ON public.staff_locations FOR ALL USING (staff_id IN (SELECT s.id FROM staff s WHERE s.organization_id IN (SELECT id FROM organizations WHERE owner_id = auth.uid())));

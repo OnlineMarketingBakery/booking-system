@@ -32,6 +32,7 @@ export default function Locations() {
         .from("locations")
         .select("*")
         .eq("organization_id", organization!.id)
+        .eq("is_active", true)
         .order("created_at");
       if (error) throw error;
       return data;
@@ -59,13 +60,20 @@ export default function Locations() {
 
   const deleteLocation = useMutation({
     mutationFn: async (id: string) => {
-      const { error } = await supabase.from("locations").delete().eq("id", id);
+      // Soft-delete: hide from lists and booking flow; existing bookings still show this location
+      const { error } = await supabase.from("locations").update({ is_active: false }).eq("id", id);
       if (error) throw error;
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["locations"] });
-      toast({ title: "Location deleted" });
+      toast({ title: "Location removed", description: "It won't appear for new bookings; existing bookings still show it." });
     },
+    onError: (err: unknown) =>
+      toast({
+        title: "Error",
+        description: err instanceof Error ? err.message : "Could not remove location.",
+        variant: "destructive",
+      }),
   });
 
   const handleAdd = (e: React.FormEvent<HTMLFormElement>) => {

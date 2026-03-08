@@ -46,6 +46,7 @@ export default function Staff() {
         .from("staff")
         .select("*")
         .eq("organization_id", organization!.id)
+        .eq("is_active", true)
         .order("created_at");
       if (error) throw error;
       return data;
@@ -100,24 +101,19 @@ export default function Staff() {
 
   const deleteStaff = useMutation({
     mutationFn: async (id: string) => {
-      const { count, error: countErr } = await supabase.from("bookings").select("id", { count: "exact", head: true }).eq("staff_id", id);
-      if (countErr) throw countErr;
-      if (count != null && count > 0) {
-        throw new Error("Cannot delete staff with existing bookings. Reassign or cancel their bookings first.");
-      }
-      // Delete related rows first (FK constraints: availability, staff_locations reference staff)
-      const { error: availErr } = await supabase.from("availability").delete().eq("staff_id", id);
-      if (availErr) throw availErr;
-      const { error: locErr } = await supabase.from("staff_locations").delete().eq("staff_id", id);
-      if (locErr) throw locErr;
-      const { error } = await supabase.from("staff").delete().eq("id", id);
+      // Soft-delete: hide from lists and booking flow; existing bookings still show this staff
+      const { error } = await supabase.from("staff").update({ is_active: false }).eq("id", id);
       if (error) throw error;
     },
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["staff"] }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["staff"] });
+      queryClient.invalidateQueries({ queryKey: ["staff-locations"] });
+      toast({ title: "Staff removed", description: "They won't appear for new bookings; existing bookings still show them." });
+    },
     onError: (err: unknown) =>
       toast({
-        title: "Cannot delete staff",
-        description: err instanceof Error ? err.message : "This staff has linked data.",
+        title: "Error",
+        description: err instanceof Error ? err.message : "Could not remove staff.",
         variant: "destructive",
       }),
   });
