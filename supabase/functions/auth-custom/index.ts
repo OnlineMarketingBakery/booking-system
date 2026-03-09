@@ -1,4 +1,5 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { Resend } from "npm:resend@2.0.0";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -287,25 +288,48 @@ Deno.serve(async (req) => {
         console.error("[auth-custom] request-password-reset insert token error:", insertErr);
         throw insertErr;
       }
-      const functionsUrl = `${Deno.env.get("SUPABASE_URL")}/functions/v1`;
-      const anonKey = Deno.env.get("SUPABASE_ANON_KEY") ?? Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
-      console.log("[auth-custom] request-password-reset: sending forgot-password email");
+      const resendKey = Deno.env.get("RESEND_API_KEY");
+      if (!resendKey) {
+        console.error("[auth-custom] RESEND_API_KEY not set");
+        return new Response(
+          JSON.stringify({ error: "We couldn't send the reset email. Please try again later." }),
+          { status: 503, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+      const fromEmail = Deno.env.get("RESEND_FROM_EMAIL") || "noreply@boeking.salonora.eu";
+      const fromName = Deno.env.get("RESEND_FROM_NAME") || "Salonora";
+      const appUrl = (Deno.env.get("APP_URL") || "").replace(/\/$/, "");
+      const resetUrl = appUrl ? `${appUrl}/reset-password?token=${encodeURIComponent(resetToken)}` : "";
+      const html = `
+        <div style="font-family: Arial, sans-serif; max-width: 500px; margin: 0 auto; padding: 24px;">
+          <h1 style="color: #7c3aed;">Reset your password</h1>
+          <p>We received a request to reset the password for your Salonora account.</p>
+          <p>Click the link below to set a new password. This link will expire in 1 hour.</p>
+          ${resetUrl ? `<p><a href="${resetUrl}" style="display: inline-block; background: #7c3aed; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px;">Set new password</a></p>` : ""}
+          <p style="color: #6b7280; font-size: 14px;">If you didn't request this, you can safely ignore this email.</p>
+        </div>
+      `;
+      console.log("[auth-custom] request-password-reset: sending email via Resend");
       try {
-        const emailRes = await fetch(`${functionsUrl}/send-forgot-password-email`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json", "Authorization": `Bearer ${anonKey}`, "apikey": anonKey ?? "" },
-          body: JSON.stringify({ email: emailNorm, reset_token: resetToken }),
+        const resend = new Resend(resendKey);
+        const { data: resendData, error: resendError } = await resend.emails.send({
+          from: `${fromName} <${fromEmail}>`,
+          to: [emailNorm],
+          subject: "Reset your Salonora password",
+          html,
         });
-        const emailResText = await emailRes.text();
-        if (!emailRes.ok) {
-          console.error("[auth-custom] send-forgot-password-email failed:", emailRes.status, emailResText);
+        if (resendError) {
+          const msg = typeof resendError === "object" && resendError !== null && "message" in resendError
+            ? String((resendError as { message?: string }).message)
+            : String(resendError);
+          console.error("[auth-custom] Resend error:", resendError);
           return new Response(
             JSON.stringify({ error: "We couldn't send the reset email. Please try again later." }),
             { status: 503, headers: { ...corsHeaders, "Content-Type": "application/json" } }
           );
         }
       } catch (e) {
-        console.error("[auth-custom] send-forgot-password-email error:", e);
+        console.error("[auth-custom] send email error:", e);
         return new Response(
           JSON.stringify({ error: "We couldn't send the reset email. Please try again later." }),
           { status: 503, headers: { ...corsHeaders, "Content-Type": "application/json" } }
@@ -343,23 +367,43 @@ Deno.serve(async (req) => {
         expires_at: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
       });
       await admin.from("password_reset_tokens").delete().eq("token", reset_token);
-      const { data: userRow } = await admin.from("app_users").select("email, full_name").eq("id", row.user_id).single();
-      const functionsUrl = `${Deno.env.get("SUPABASE_URL")}/functions/v1`;
-      const anonKey = Deno.env.get("SUPABASE_ANON_KEY") ?? Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
-      try {
-        await fetch(`${functionsUrl}/send-password-change-confirm-email`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json", "Authorization": `Bearer ${anonKey}`, "apikey": anonKey ?? "" },
-          body: JSON.stringify({
-            email: userRow?.email,
-            full_name: userRow?.full_name,
-            confirm_token: confirmToken,
-          }),
-        });
-      } catch (e) {
-        console.error("[auth-custom] send-password-change-confirm-email error:", e);
+      // Apply new password immediately so old password stops working right away
+      const { error: updatePwdErr } = await admin.from("app_users").update({ password_hash: passwordHash }).eq("id", row.user_id);
+      if (updatePwdErr) {
+        console.error("[auth-custom] set-new-password update app_users error:", updatePwdErr);
+        throw updatePwdErr;
       }
-      return new Response(JSON.stringify({ success: true, message: "Check your email and click the link to confirm your new password." }), {
+      const { data: userRow } = await admin.from("app_users").select("email, full_name").eq("id", row.user_id).single();
+      const resendKeyConfirm = Deno.env.get("RESEND_API_KEY");
+      const fromEmailConfirm = Deno.env.get("RESEND_FROM_EMAIL") || "noreply@boeking.salonora.eu";
+      const fromNameConfirm = Deno.env.get("RESEND_FROM_NAME") || "Salonora";
+      const appUrlConfirm = (Deno.env.get("APP_URL") || "").replace(/\/$/, "");
+      const confirmUrl = appUrlConfirm ? `${appUrlConfirm}/confirm-password-change?token=${encodeURIComponent(confirmToken)}` : "";
+      const userName = userRow?.full_name || "there";
+      if (resendKeyConfirm && userRow?.email) {
+        try {
+          const resendConfirm = new Resend(resendKeyConfirm);
+          const htmlConfirm = `
+            <div style="font-family: Arial, sans-serif; max-width: 500px; margin: 0 auto; padding: 24px;">
+              <h1 style="color: #7c3aed;">Your password has been changed</h1>
+              <p>Hi ${userName},</p>
+              <p>Your Salonora account password was changed successfully. You can now sign in with your new password.</p>
+              ${confirmUrl ? `<p><a href="${confirmUrl}" style="display: inline-block; background: #7c3aed; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px;">Confirm this change</a></p>` : ""}
+              <p style="color: #6b7280; font-size: 14px;">If you didn't make this change, use "Forgot password" to set a new one.</p>
+            </div>
+          `;
+          const { error: resendErr } = await resendConfirm.emails.send({
+            from: `${fromNameConfirm} <${fromEmailConfirm}>`,
+            to: [userRow.email],
+            subject: "Your password has been changed - Salonora",
+            html: htmlConfirm,
+          });
+          if (resendErr) console.error("[auth-custom] confirm email Resend error:", resendErr);
+        } catch (e) {
+          console.error("[auth-custom] send confirm email error:", e);
+        }
+      }
+      return new Response(JSON.stringify({ success: true, message: "Your password has been updated. You can sign in with your new password. We've sent a confirmation email." }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
@@ -373,7 +417,7 @@ Deno.serve(async (req) => {
       }
       const { data: pending } = await admin
         .from("pending_password_confirms")
-        .select("user_id, password_hash")
+        .select("user_id")
         .eq("token", confirm_token)
         .gt("expires_at", new Date().toISOString())
         .maybeSingle();
@@ -382,9 +426,8 @@ Deno.serve(async (req) => {
           status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
       }
-      await admin.from("app_users").update({ password_hash: pending.password_hash }).eq("id", pending.user_id);
       await admin.from("pending_password_confirms").delete().eq("token", confirm_token);
-      return new Response(JSON.stringify({ success: true, message: "Your password has been changed. You can now sign in." }), {
+      return new Response(JSON.stringify({ success: true, message: "Your password change has been confirmed. You can sign in with your new password." }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }

@@ -65,7 +65,7 @@ export default function ResetPassword() {
     try {
       await setNewPassword(token, password);
       setSubmitted(true);
-      toast({ title: "Check your email", description: "Click the link in the email to confirm your new password." });
+      toast({ title: "Password updated", description: "You can sign in with your new password. We've sent a confirmation email." });
     } catch (err: any) {
       toast({ title: "Failed", description: err.message, variant: "destructive" });
     } finally {
@@ -78,9 +78,9 @@ export default function ResetPassword() {
       <div className="flex min-h-screen items-center justify-center bg-muted/30 px-4">
         <Card className="w-full max-w-md">
           <CardHeader>
-            <CardTitle>Check your email</CardTitle>
+            <CardTitle>Password updated</CardTitle>
             <CardDescription>
-              We’ve sent you an email with a link to confirm your new password. Click that link to complete the change, then sign in.
+              We’ve Your password has been changed. You can sign in with your new password now. A confirmation email was also sent—click the link to confirm.
             </CardDescription>
           </CardHeader>
           <CardContent>
