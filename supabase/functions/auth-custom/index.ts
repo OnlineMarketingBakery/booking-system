@@ -238,6 +238,121 @@ Deno.serve(async (req) => {
       );
     }
 
+    // --- Forgot password flow (no auth required) ---
+    if (action === "request-password-reset") {
+      const { email } = body;
+      if (!email || typeof email !== "string") {
+        return new Response(JSON.stringify({ error: "Email is required" }), {
+          status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+      const emailNorm = email.toLowerCase().trim();
+      const { data: appUser } = await admin
+        .from("app_users")
+        .select("id")
+        .eq("email", emailNorm)
+        .eq("approval_status", "approved")
+        .maybeSingle();
+      if (!appUser) {
+        return new Response(JSON.stringify({ success: true, message: "If an account exists with this email, you will receive a reset link." }), {
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+      const resetToken = crypto.randomUUID();
+      await admin.from("password_reset_tokens").insert({
+        user_id: appUser.id,
+        token: resetToken,
+        expires_at: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+      });
+      const functionsUrl = `${Deno.env.get("SUPABASE_URL")}/functions/v1`;
+      const anonKey = Deno.env.get("SUPABASE_ANON_KEY") ?? Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+      try {
+        await fetch(`${functionsUrl}/send-forgot-password-email`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "Authorization": `Bearer ${anonKey}`, "apikey": anonKey ?? "" },
+          body: JSON.stringify({ email: emailNorm, reset_token: resetToken }),
+        });
+      } catch (e) {
+        console.error("[auth-custom] send-forgot-password-email error:", e);
+      }
+      return new Response(JSON.stringify({ success: true, message: "If an account exists with this email, you will receive a reset link." }), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    if (action === "set-new-password") {
+      const { reset_token, new_password } = body;
+      if (!reset_token || !new_password || new_password.length < 6) {
+        return new Response(JSON.stringify({ error: "Invalid request. Password must be at least 6 characters." }), {
+          status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+      const { data: row } = await admin
+        .from("password_reset_tokens")
+        .select("user_id")
+        .eq("token", reset_token)
+        .gt("expires_at", new Date().toISOString())
+        .maybeSingle();
+      if (!row) {
+        return new Response(JSON.stringify({ error: "This reset link is invalid or has expired." }), {
+          status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+      const passwordHash = await hashPassword(new_password);
+      const confirmToken = crypto.randomUUID();
+      await admin.from("pending_password_confirms").insert({
+        token: confirmToken,
+        user_id: row.user_id,
+        password_hash: passwordHash,
+        expires_at: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+      });
+      await admin.from("password_reset_tokens").delete().eq("token", reset_token);
+      const { data: userRow } = await admin.from("app_users").select("email, full_name").eq("id", row.user_id).single();
+      const functionsUrl = `${Deno.env.get("SUPABASE_URL")}/functions/v1`;
+      const anonKey = Deno.env.get("SUPABASE_ANON_KEY") ?? Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+      try {
+        await fetch(`${functionsUrl}/send-password-change-confirm-email`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "Authorization": `Bearer ${anonKey}`, "apikey": anonKey ?? "" },
+          body: JSON.stringify({
+            email: userRow?.email,
+            full_name: userRow?.full_name,
+            confirm_token: confirmToken,
+          }),
+        });
+      } catch (e) {
+        console.error("[auth-custom] send-password-change-confirm-email error:", e);
+      }
+      return new Response(JSON.stringify({ success: true, message: "Check your email and click the link to confirm your new password." }), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    if (action === "confirm-password-change") {
+      const { confirm_token } = body;
+      if (!confirm_token) {
+        return new Response(JSON.stringify({ error: "Invalid confirmation link." }), {
+          status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+      const { data: pending } = await admin
+        .from("pending_password_confirms")
+        .select("user_id, password_hash")
+        .eq("token", confirm_token)
+        .gt("expires_at", new Date().toISOString())
+        .maybeSingle();
+      if (!pending) {
+        return new Response(JSON.stringify({ error: "This confirmation link is invalid or has expired." }), {
+          status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+      await admin.from("app_users").update({ password_hash: pending.password_hash }).eq("id", pending.user_id);
+      await admin.from("pending_password_confirms").delete().eq("token", confirm_token);
+      return new Response(JSON.stringify({ success: true, message: "Your password has been changed. You can now sign in." }), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
     return new Response(JSON.stringify({ error: "Invalid action" }), {
       status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
     });

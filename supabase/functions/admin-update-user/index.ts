@@ -44,26 +44,6 @@ async function verifyCustomJWT(token: string): Promise<{ sub: string; email: str
   }
 }
 
-async function hashPassword(password: string): Promise<string> {
-  const encoder = new TextEncoder();
-  const salt = crypto.getRandomValues(new Uint8Array(16));
-  const key = await crypto.subtle.importKey(
-    "raw",
-    encoder.encode(password),
-    "PBKDF2",
-    false,
-    ["deriveBits"]
-  );
-  const derived = await crypto.subtle.deriveBits(
-    { name: "PBKDF2", salt, iterations: 100000, hash: "SHA-256" },
-    key,
-    256
-  );
-  const saltB64 = btoa(String.fromCharCode(...salt));
-  const hashB64 = btoa(String.fromCharCode(...new Uint8Array(derived)));
-  return `pbkdf2:100000:${saltB64}:${hashB64}`;
-}
-
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { status: 204, headers: corsHeaders });
@@ -106,7 +86,7 @@ Deno.serve(async (req) => {
     }
 
     const body = await req.json();
-    const { user_id, full_name, new_password } = body;
+    const { user_id, full_name } = body;
 
     if (!user_id) {
       return new Response(JSON.stringify({ error: "user_id required" }), {
@@ -127,31 +107,6 @@ Deno.serve(async (req) => {
         .update({ full_name: full_name.trim() })
         .eq("id", user_id);
       if (appUserErr) throw appUserErr;
-    }
-
-    if (
-      new_password != null &&
-      typeof new_password === "string" &&
-      new_password.length >= 6
-    ) {
-      const passwordHash = await hashPassword(new_password);
-      const { error: pwdErr } = await admin
-        .from("app_users")
-        .update({ password_hash: passwordHash })
-        .eq("id", user_id);
-      if (pwdErr) throw pwdErr;
-    } else if (
-      new_password != null &&
-      typeof new_password === "string" &&
-      new_password.length > 0
-    ) {
-      return new Response(
-        JSON.stringify({ error: "Password must be at least 6 characters" }),
-        {
-          status: 400,
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-        }
-      );
     }
 
     return new Response(JSON.stringify({ success: true }), {

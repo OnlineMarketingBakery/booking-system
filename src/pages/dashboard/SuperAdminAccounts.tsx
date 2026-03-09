@@ -243,7 +243,6 @@ export default function SuperAdminAccounts() {
       tier: OrgTier;
       ownerId: string;
       ownerName: string;
-      newPassword?: string;
     }) => {
       const { error: orgErr } = await supabase
         .from("organizations")
@@ -254,7 +253,6 @@ export default function SuperAdminAccounts() {
       await invokeFunction("admin-update-user", {
         user_id: payload.ownerId,
         full_name: payload.ownerName,
-        ...(payload.newPassword && payload.newPassword.length >= 6 ? { new_password: payload.newPassword } : {}),
       });
     },
     onSuccess: () => {
@@ -309,14 +307,12 @@ export default function SuperAdminAccounts() {
       toast({ title: "Please wait a moment", description: "Then try again.", variant: "destructive" });
       return;
     }
-    const newPassword = (form.get("newPassword") as string)?.trim() || undefined;
     updateSalon.mutate({
       orgId: editSalon.id,
       orgName: (form.get("orgName") as string) || editSalon.name,
       tier: (form.get("tier") as OrgTier) || "tier_1",
       ownerId: editSalon.owner_id,
       ownerName: (form.get("ownerName") as string) || editSalon.owner_name || "",
-      newPassword: newPassword && newPassword.length >= 6 ? newPassword : undefined,
     });
   };
 
@@ -498,10 +494,6 @@ export default function SuperAdminAccounts() {
                 <div className="space-y-2">
                   <Label>Email</Label>
                   <Input value={editSalon.owner_email || ""} disabled className="opacity-60" />
-                </div>
-                <div className="space-y-2">
-                  <Label>New Password (optional)</Label>
-                  <Input name="newPassword" type="password" minLength={6} placeholder="Leave blank to keep current" />
                 </div>
               </div>
               <Button type="submit" className="w-full" disabled={updateSalon.isPending}>

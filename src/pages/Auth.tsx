@@ -6,16 +6,27 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
 import { useSpamProtection } from "@/hooks/useSpamProtection";
 import { SpamProtectionFields } from "@/components/SpamProtectionFields";
-import { Scissors, Loader2 } from "lucide-react";
+import { Loader2 } from "lucide-react";
 
 export default function Auth() {
-  const { signIn, signUp, user } = useAuth();
+  const { signIn, signUp, user, requestPasswordReset } = useAuth();
   const navigate = useNavigate();
   const { toast } = useToast();
   const [loading, setLoading] = useState(false);
+  const [forgotOpen, setForgotOpen] = useState(false);
+  const [forgotEmail, setForgotEmail] = useState("");
+  const [forgotLoading, setForgotLoading] = useState(false);
+  const [forgotSent, setForgotSent] = useState(false);
   const { validateSpamProtection, SpamProtectionFieldsProps } = useSpamProtection();
 
   // Redirect if already logged in
@@ -72,6 +83,31 @@ export default function Auth() {
     }
   };
 
+  const handleForgotPassword = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    const form = new FormData(e.currentTarget);
+    if (!validateSpamProtection(form)) {
+      toast({ title: "Please wait a moment", description: "Then try again.", variant: "destructive" });
+      return;
+    }
+    const email = (form.get("email") as string)?.trim();
+    if (!email) {
+      toast({ title: "Enter your email", variant: "destructive" });
+      return;
+    }
+    setForgotLoading(true);
+    try {
+      await requestPasswordReset(email);
+      setForgotSent(true);
+      setForgotEmail(email);
+      toast({ title: "Check your email", description: "If an account exists, we sent a reset link." });
+    } catch (err: any) {
+      toast({ title: "Something went wrong", description: err.message, variant: "destructive" });
+    } finally {
+      setForgotLoading(false);
+    }
+  };
+
   return (
     <div className="flex min-h-screen items-center justify-center bg-muted/30 px-4">
       <div className="w-full max-w-md space-y-6">
@@ -108,6 +144,15 @@ export default function Auth() {
                     {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
                     Sign In
                   </Button>
+                  <p className="text-center">
+                    <button
+                      type="button"
+                      className="text-sm text-primary hover:underline"
+                      onClick={() => { setForgotSent(false); setForgotOpen(true); }}
+                    >
+                      Forgot password?
+                    </button>
+                  </p>
                 </CardContent>
               </form>
             </TabsContent>
@@ -140,6 +185,34 @@ export default function Auth() {
             </TabsContent>
           </Tabs>
         </Card>
+
+        <Dialog open={forgotOpen} onOpenChange={(open) => { setForgotOpen(open); if (!open) setForgotSent(false); }}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Forgot password</DialogTitle>
+              <DialogDescription>
+                Enter the email address for your account. We’ll send you a link to set a new password.
+              </DialogDescription>
+            </DialogHeader>
+            {forgotSent ? (
+              <p className="text-sm text-muted-foreground py-2">
+                If an account exists for <strong>{forgotEmail}</strong>, we’ve sent a link to set a new password. Check your inbox and spam folder.
+              </p>
+            ) : (
+              <form onSubmit={handleForgotPassword} className="space-y-4">
+                <SpamProtectionFields {...SpamProtectionFieldsProps} />
+                <div className="space-y-2">
+                  <Label htmlFor="forgot-email">Email</Label>
+                  <Input id="forgot-email" name="email" type="email" required placeholder="you@example.com" autoFocus />
+                </div>
+                <Button type="submit" className="w-full" disabled={forgotLoading}>
+                  {forgotLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                  Send reset link
+                </Button>
+              </form>
+            )}
+          </DialogContent>
+        </Dialog>
       </div>
     </div>
   );

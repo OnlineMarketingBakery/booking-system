@@ -9,6 +9,8 @@ import { DashboardLayout } from "@/components/DashboardLayout";
 import Index from "./pages/Index";
 import Auth from "./pages/Auth";
 import NotFound from "./pages/NotFound";
+import ResetPassword from "./pages/ResetPassword";
+import ConfirmPasswordChange from "./pages/ConfirmPasswordChange";
 import DashboardIndex from "./pages/dashboard/DashboardIndex";
 import Bookings from "./pages/dashboard/Bookings";
 import Locations from "./pages/dashboard/Locations";
@@ -39,6 +41,8 @@ const App = () => (
             <Route path="/book/success" element={<ThankYouPage />} />
             <Route path="/book/cancel" element={<BookingPage />} />
             <Route path="/auth/google-callback" element={<GoogleOAuthRedirect />} />
+            <Route path="/reset-password" element={<ResetPassword />} />
+            <Route path="/confirm-password-change" element={<ConfirmPasswordChange />} />
             <Route
               path="/dashboard"
               element={

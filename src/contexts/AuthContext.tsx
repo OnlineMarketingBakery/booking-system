@@ -18,6 +18,9 @@ interface AuthContextType {
   signIn: (email: string, password: string) => Promise<void>;
   signOut: () => Promise<void>;
   changePassword: (newPassword: string) => Promise<void>;
+  requestPasswordReset: (email: string) => Promise<void>;
+  setNewPassword: (resetToken: string, newPassword: string) => Promise<void>;
+  confirmPasswordChange: (confirmToken: string) => Promise<void>;
   hasRole: (role: AppRole) => boolean;
   refreshRoles: () => Promise<void>;
   invokeFunction: (name: string, body?: any) => Promise<any>;
@@ -146,6 +149,36 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (!res.ok) throw new Error(data.error || "Password change failed");
   };
 
+  const requestPasswordReset = async (email: string) => {
+    const res = await fetch(FUNCTION_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "request-password-reset", email: email.trim() }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || "Request failed");
+  };
+
+  const setNewPassword = async (resetToken: string, newPassword: string) => {
+    const res = await fetch(FUNCTION_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "set-new-password", reset_token: resetToken, new_password: newPassword }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || "Failed to set password");
+  };
+
+  const confirmPasswordChange = async (confirmToken: string) => {
+    const res = await fetch(FUNCTION_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "confirm-password-change", confirm_token: confirmToken }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || "Confirmation failed");
+  };
+
   const hasRole = (role: AppRole) => roles.includes(role);
 
   const refreshRoles = async () => {
@@ -168,7 +201,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   return (
-    <AuthContext.Provider value={{ user, roles, loading, token, signUp, signIn, signOut, changePassword, hasRole, refreshRoles, invokeFunction }}>
+    <AuthContext.Provider value={{ user, roles, loading, token, signUp, signIn, signOut, changePassword, requestPasswordReset, setNewPassword, confirmPasswordChange, hasRole, refreshRoles, invokeFunction }}>
       {children}
     </AuthContext.Provider>
   );
