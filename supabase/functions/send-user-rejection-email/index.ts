@@ -17,6 +17,8 @@ serve(async (req) => {
     if (!resendKey) throw new Error("RESEND_API_KEY is not set");
 
     const resend = new Resend(resendKey);
+    const fromEmail = Deno.env.get("RESEND_FROM_EMAIL") || "onboarding@resend.dev";
+    const fromName = Deno.env.get("RESEND_FROM_NAME") || "Salonora";
     const { email, full_name } = await req.json();
     if (!email) throw new Error("email is required");
 
@@ -33,7 +35,7 @@ serve(async (req) => {
     `;
 
     await resend.emails.send({
-      from: "Salonora <onboarding@resend.dev>",
+      from: `${fromName} <${fromEmail}>`,
       to: [email],
       subject: "Your account request was not approved",
       html,

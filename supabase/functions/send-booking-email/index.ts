@@ -74,8 +74,9 @@ serve(async (req) => {
       </div>
     `;
 
+    const fromEmail = Deno.env.get("RESEND_FROM_EMAIL") || "onboarding@resend.dev";
     const emailResult = await resend.emails.send({
-      from: `${org?.name || "GlowBook"} <onboarding@resend.dev>`,
+      from: `${org?.name || "GlowBook"} <${fromEmail}>`,
       to: [booking.customer_email],
       subject,
       html,

@@ -114,8 +114,10 @@ Deno.serve(async (req) => {
             <p style="color: #6b7280; font-size: 14px;">Thank you.</p>
           </div>
         `;
+        const fromEmail = Deno.env.get("RESEND_FROM_EMAIL") || "onboarding@resend.dev";
+        const fromName = Deno.env.get("RESEND_FROM_NAME") || "Salonora";
         await resend.emails.send({
-          from: "Salonora <onboarding@resend.dev>",
+          from: `${fromName} <${fromEmail}>`,
           to: [user.email],
           subject: "Your account request was not approved",
           html,
