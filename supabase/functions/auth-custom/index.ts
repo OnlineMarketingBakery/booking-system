@@ -261,33 +261,55 @@ Deno.serve(async (req) => {
         });
       }
       const emailNorm = email.toLowerCase().trim();
-      const { data: appUser } = await admin
+      const { data: appUser, error: userErr } = await admin
         .from("app_users")
         .select("id")
         .eq("email", emailNorm)
         .eq("approval_status", "approved")
         .maybeSingle();
+      if (userErr) {
+        console.error("[auth-custom] request-password-reset lookup error:", userErr);
+        throw userErr;
+      }
       if (!appUser) {
+        console.log("[auth-custom] request-password-reset: no approved user for email, skipping send");
         return new Response(JSON.stringify({ success: true, message: "If an account exists with this email, you will receive a reset link." }), {
           headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
       }
       const resetToken = crypto.randomUUID();
-      await admin.from("password_reset_tokens").insert({
+      const { error: insertErr } = await admin.from("password_reset_tokens").insert({
         user_id: appUser.id,
         token: resetToken,
         expires_at: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
       });
+      if (insertErr) {
+        console.error("[auth-custom] request-password-reset insert token error:", insertErr);
+        throw insertErr;
+      }
       const functionsUrl = `${Deno.env.get("SUPABASE_URL")}/functions/v1`;
       const anonKey = Deno.env.get("SUPABASE_ANON_KEY") ?? Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+      console.log("[auth-custom] request-password-reset: sending forgot-password email");
       try {
-        await fetch(`${functionsUrl}/send-forgot-password-email`, {
+        const emailRes = await fetch(`${functionsUrl}/send-forgot-password-email`, {
           method: "POST",
           headers: { "Content-Type": "application/json", "Authorization": `Bearer ${anonKey}`, "apikey": anonKey ?? "" },
           body: JSON.stringify({ email: emailNorm, reset_token: resetToken }),
         });
+        const emailResText = await emailRes.text();
+        if (!emailRes.ok) {
+          console.error("[auth-custom] send-forgot-password-email failed:", emailRes.status, emailResText);
+          return new Response(
+            JSON.stringify({ error: "We couldn't send the reset email. Please try again later." }),
+            { status: 503, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+          );
+        }
       } catch (e) {
         console.error("[auth-custom] send-forgot-password-email error:", e);
+        return new Response(
+          JSON.stringify({ error: "We couldn't send the reset email. Please try again later." }),
+          { status: 503, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
       }
       return new Response(JSON.stringify({ success: true, message: "If an account exists with this email, you will receive a reset link." }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },

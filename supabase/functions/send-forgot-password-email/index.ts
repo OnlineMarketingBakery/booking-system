@@ -35,14 +35,25 @@ serve(async (req) => {
       </div>
     `;
 
-    await resend.emails.send({
+    const { data, error } = await resend.emails.send({
       from: `${fromName} <${fromEmail}>`,
       to: [email],
       subject: "Reset your Salonora password",
       html,
     });
 
-    return new Response(JSON.stringify({ success: true }), {
+    if (error) {
+      const msg = typeof error === "object" && error !== null && "message" in error
+        ? String((error as { message?: string }).message)
+        : String(error);
+      console.error("[send-forgot-password-email] Resend error:", error);
+      return new Response(JSON.stringify({ error: msg }), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+        status: 500,
+      });
+    }
+
+    return new Response(JSON.stringify({ success: true, id: data?.id }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
       status: 200,
     });
