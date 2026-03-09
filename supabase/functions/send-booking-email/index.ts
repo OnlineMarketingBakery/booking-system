@@ -74,7 +74,7 @@ serve(async (req) => {
       </div>
     `;
 
-    const fromEmail = Deno.env.get("RESEND_FROM_EMAIL") || "onboarding@resend.dev";
+    const fromEmail = Deno.env.get("RESEND_FROM_EMAIL") || "noreply@boeking.salonora.eu";
     const emailResult = await resend.emails.send({
       from: `${org?.name || "GlowBook"} <${fromEmail}>`,
       to: [booking.customer_email],

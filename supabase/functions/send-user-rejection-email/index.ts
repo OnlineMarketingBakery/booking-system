@@ -17,7 +17,7 @@ serve(async (req) => {
     if (!resendKey) throw new Error("RESEND_API_KEY is not set");
 
     const resend = new Resend(resendKey);
-    const fromEmail = Deno.env.get("RESEND_FROM_EMAIL") || "onboarding@resend.dev";
+    const fromEmail = Deno.env.get("RESEND_FROM_EMAIL") || "noreply@boeking.salonora.eu";
     const fromName = Deno.env.get("RESEND_FROM_NAME") || "Salonora";
     const { email, full_name } = await req.json();
     if (!email) throw new Error("email is required");

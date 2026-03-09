@@ -114,7 +114,8 @@ Deno.serve(async (req) => {
             <p style="color: #6b7280; font-size: 14px;">Thank you.</p>
           </div>
         `;
-        const fromEmail = Deno.env.get("RESEND_FROM_EMAIL") || "onboarding@resend.dev";
+        // Set RESEND_FROM_EMAIL in Supabase Edge Functions → Secrets (e.g. noreply@boeking.salonora.eu). Otherwise fallback is used.
+        const fromEmail = Deno.env.get("RESEND_FROM_EMAIL") || "noreply@boeking.salonora.eu";
         const fromName = Deno.env.get("RESEND_FROM_NAME") || "Salonora";
         await resend.emails.send({
           from: `${fromName} <${fromEmail}>`,

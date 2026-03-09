@@ -8,9 +8,10 @@ Code and docs have been updated to use **https://boeking.salonora.eu**. Complete
 
 In **Supabase Dashboard** → **Edge Functions** → **Secrets**, set or update:
 
-| Secret     | Value |
-|-----------|--------|
+| Secret | Value |
+|--------|--------|
 | `APP_URL` | `https://boeking.salonora.eu` |
+| `RESEND_FROM_EMAIL` | Your sender address on a **verified** Resend domain (e.g. `noreply@boeking.salonora.eu`). Required so emails can be sent to external recipients instead of using the test domain `onboarding@resend.dev`. |
 
 This is used for:
 - Stripe success/cancel redirects after payment (`create-booking-checkout`)
