@@ -7,6 +7,8 @@ import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
+import { useSpamProtection } from "@/hooks/useSpamProtection";
+import { SpamProtectionFields } from "@/components/SpamProtectionFields";
 import { Scissors, Loader2 } from "lucide-react";
 
 export default function Auth() {
@@ -14,6 +16,7 @@ export default function Auth() {
   const navigate = useNavigate();
   const { toast } = useToast();
   const [loading, setLoading] = useState(false);
+  const { validateSpamProtection, SpamProtectionFieldsProps } = useSpamProtection();
 
   // Redirect if already logged in
   if (user) {
@@ -23,8 +26,12 @@ export default function Auth() {
 
   const handleSignIn = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
-    setLoading(true);
     const form = new FormData(e.currentTarget);
+    if (!validateSpamProtection(form)) {
+      toast({ title: "Please wait a moment", description: "Then try signing in again.", variant: "destructive" });
+      return;
+    }
+    setLoading(true);
     try {
       await signIn(form.get("email") as string, form.get("password") as string);
       navigate("/dashboard");
@@ -37,14 +44,25 @@ export default function Auth() {
 
   const handleSignUp = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
-    setLoading(true);
     const form = new FormData(e.currentTarget);
+    if (!validateSpamProtection(form)) {
+      toast({ title: "Please wait a moment", description: "Then try creating your account again.", variant: "destructive" });
+      return;
+    }
+    setLoading(true);
     try {
-      await signUp(
+      const result = await signUp(
         form.get("email") as string,
         form.get("password") as string,
         form.get("fullName") as string
       );
+      if (result && "pending" in result && result.pending) {
+        toast({
+          title: "Account created",
+          description: "Your account is pending approval. You'll receive an email when an admin approves your request.",
+        });
+        return;
+      }
       toast({ title: "Account created!", description: "You're now signed in." });
       navigate("/dashboard");
     } catch (err: any) {
@@ -77,6 +95,7 @@ export default function Auth() {
             <TabsContent value="signin">
               <form onSubmit={handleSignIn}>
                 <CardContent className="space-y-4">
+                  <SpamProtectionFields {...SpamProtectionFieldsProps} />
                   <div className="space-y-2">
                     <Label htmlFor="signin-email">Email</Label>
                     <Input id="signin-email" name="email" type="email" required placeholder="you@example.com" maxLength={255} />
@@ -96,6 +115,7 @@ export default function Auth() {
             <TabsContent value="signup">
               <form onSubmit={handleSignUp}>
                 <CardContent className="space-y-4">
+                  <SpamProtectionFields {...SpamProtectionFieldsProps} />
                   <div className="space-y-2">
                     <Label htmlFor="signup-name">Full Name</Label>
                     <Input id="signup-name" name="fullName" required placeholder="Jane Smith" maxLength={100} minLength={2} />

@@ -22,6 +22,8 @@ import {
 } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
 import { useToast } from "@/hooks/use-toast";
+import { useSpamProtection } from "@/hooks/useSpamProtection";
+import { SpamProtectionFields } from "@/components/SpamProtectionFields";
 import {
   Scissors,
   Loader2,
@@ -48,6 +50,7 @@ export default function BookingPage() {
   const { slug } = useParams<{ slug: string }>();
   const [searchParams] = useSearchParams();
   const { toast } = useToast();
+  const { validateSpamProtection, SpamProtectionFieldsProps } = useSpamProtection();
   const [step, setStep] = useState<Step>("location");
   const [selectedLocation, setSelectedLocation] = useState<string>("");
   const [selectedServices, setSelectedServices] = useState<string[]>([]);
@@ -285,8 +288,12 @@ export default function BookingPage() {
 
   const handleBook = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
-    setBooking(true);
     const form = new FormData(e.currentTarget);
+    if (!validateSpamProtection(form)) {
+      toast({ title: "Please wait a moment", description: "Then try submitting your booking again.", variant: "destructive" });
+      return;
+    }
+    setBooking(true);
     const [h, m] = selectedTime.split(":").map(Number);
     const startTime = setMinutes(
       setHours(new Date(selectedDate + "T00:00:00"), h),
@@ -625,6 +632,7 @@ export default function BookingPage() {
               </CardHeader>
               <CardContent>
                 <form onSubmit={handleBook} className="space-y-4">
+                  <SpamProtectionFields {...SpamProtectionFieldsProps} />
                   <div className="space-y-2">
                     <Label>Name</Label>
                     <Input

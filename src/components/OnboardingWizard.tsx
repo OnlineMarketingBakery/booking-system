@@ -6,10 +6,13 @@ import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Loader2, Scissors } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import { useSpamProtection } from "@/hooks/useSpamProtection";
+import { SpamProtectionFields } from "@/components/SpamProtectionFields";
 
 export function OnboardingWizard() {
   const { createOrganization } = useOrganization();
   const { toast } = useToast();
+  const { validateSpamProtection, SpamProtectionFieldsProps } = useSpamProtection();
   const [name, setName] = useState("");
   const [slug, setSlug] = useState("");
 
@@ -18,8 +21,12 @@ export function OnboardingWizard() {
     setSlug(val.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, ""));
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
+    if (!validateSpamProtection(e.currentTarget)) {
+      toast({ title: "Please wait a moment", description: "Then try again.", variant: "destructive" });
+      return;
+    }
     try {
       await createOrganization.mutateAsync({ name, slug });
       toast({ title: "Salon created!", description: "Welcome to GlowBook." });
@@ -42,6 +49,7 @@ export function OnboardingWizard() {
         </CardHeader>
         <form onSubmit={handleSubmit}>
           <CardContent className="space-y-4">
+            <SpamProtectionFields {...SpamProtectionFieldsProps} />
             <div className="space-y-2">
               <Label htmlFor="salon-name">Salon Name</Label>
               <Input
@@ -57,7 +65,7 @@ export function OnboardingWizard() {
             <div className="space-y-2">
               <Label htmlFor="salon-slug">Booking URL Slug</Label>
               <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                <span>yourapp.com/book/</span>
+                <span>boeking.salonora.eu/book/</span>
                 <Input
                   id="salon-slug"
                   value={slug}

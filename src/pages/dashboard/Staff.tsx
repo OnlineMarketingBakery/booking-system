@@ -12,6 +12,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
+import { useSpamProtection } from "@/hooks/useSpamProtection";
+import { SpamProtectionFields } from "@/components/SpamProtectionFields";
 import { Plus, Users, Trash2, Loader2, ChevronDown, KeyRound, MapPin } from "lucide-react";
 import { StaffAvailability } from "@/components/StaffAvailability";
 import { StaffLocationAssignment } from "@/components/StaffLocationAssignment";
@@ -24,6 +26,7 @@ export default function Staff() {
   const [expandedStaff, setExpandedStaff] = useState<string | null>(null);
   const [createAccount, setCreateAccount] = useState(false);
   const [selectedLocationId, setSelectedLocationId] = useState("");
+  const { validateSpamProtection, SpamProtectionFieldsProps } = useSpamProtection();
 
   const { data: locations = [] } = useQuery({
     queryKey: ["locations", organization?.id],
@@ -121,6 +124,10 @@ export default function Staff() {
   const handleAdd = (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     const form = new FormData(e.currentTarget);
+    if (!validateSpamProtection(form)) {
+      toast({ title: "Please wait a moment", description: "Then try adding the staff member again.", variant: "destructive" });
+      return;
+    }
     const password = form.get("password") as string;
     addStaff.mutate({
       name: form.get("name") as string,
@@ -145,6 +152,7 @@ export default function Staff() {
           <DialogContent>
             <DialogHeader><DialogTitle>Add Staff Member</DialogTitle></DialogHeader>
             <form onSubmit={handleAdd} className="space-y-4">
+              <SpamProtectionFields {...SpamProtectionFieldsProps} />
               <div className="space-y-2">
                 <Label>Name</Label>
                 <Input name="name" required placeholder="Jane Doe" maxLength={100} minLength={2} />

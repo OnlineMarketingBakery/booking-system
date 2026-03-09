@@ -32,3 +32,15 @@ verify_jwt = false
 
 [functions.auth-custom]
 verify_jwt = false
+
+[functions.send-signup-notification]
+verify_jwt = false
+
+[functions.send-user-approval-email]
+verify_jwt = false
+
+[functions.get-pending-signups]
+verify_jwt = false
+
+[functions.approve-user]
+verify_jwt = false

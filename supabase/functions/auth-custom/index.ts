@@ -102,9 +102,19 @@ Deno.serve(async (req) => {
       }
 
       const passwordHash = await hashPassword(password);
+      // First user ever is auto-approved and becomes super_admin; everyone else starts as pending
+      const { count } = await admin.from("user_roles").select("id", { count: "exact", head: true });
+      const isFirstUser = count === 0;
+      const approvalStatus = isFirstUser ? "approved" : "pending";
+
       const { data: newUser, error: insertErr } = await admin
         .from("app_users")
-        .insert({ email: email.toLowerCase().trim(), password_hash: passwordHash, full_name: fullName || null })
+        .insert({
+          email: email.toLowerCase().trim(),
+          password_hash: passwordHash,
+          full_name: fullName || null,
+          approval_status: approvalStatus,
+        })
         .select("id, email, full_name")
         .single();
 
@@ -112,13 +122,45 @@ Deno.serve(async (req) => {
 
       // Create profile and assign role
       await admin.from("profiles").insert({ id: newUser.id, email: newUser.email, full_name: newUser.full_name });
-      // First user ever becomes super_admin; everyone else gets salon_owner
-      const { count } = await admin.from("user_roles").select("id", { count: "exact", head: true });
-      const role = count === 0 ? "super_admin" : "salon_owner";
+      const role = isFirstUser ? "super_admin" : "salon_owner";
       await admin.from("user_roles").insert({ user_id: newUser.id, role });
 
-      const token = await createJWT(newUser.id, newUser.email);
+      if (approvalStatus === "pending") {
+        // Notify admin about new signup request (invoke send-signup-notification)
+        const functionsUrl = `${Deno.env.get("SUPABASE_URL")}/functions/v1`;
+        const anonKey = Deno.env.get("SUPABASE_ANON_KEY") ?? Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+        try {
+          const notifRes = await fetch(`${functionsUrl}/send-signup-notification`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "Authorization": `Bearer ${anonKey}`,
+              "apikey": anonKey ?? "",
+            },
+            body: JSON.stringify({
+              email: newUser.email,
+              full_name: newUser.full_name,
+              user_id: newUser.id,
+            }),
+          });
+          if (!notifRes.ok) {
+            const errText = await notifRes.text();
+            console.error("[auth-custom] send-signup-notification failed:", notifRes.status, errText);
+          }
+        } catch (err) {
+          console.error("[auth-custom] send-signup-notification error:", err);
+        }
 
+        return new Response(
+          JSON.stringify({
+            pending: true,
+            message: "Your account has been created and is pending approval. You will receive an email when an admin approves your request.",
+          }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+
+      const token = await createJWT(newUser.id, newUser.email);
       return new Response(
         JSON.stringify({ token, user: { id: newUser.id, email: newUser.email, full_name: newUser.full_name } }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } }
@@ -135,7 +177,7 @@ Deno.serve(async (req) => {
 
       const { data: user, error: findErr } = await admin
         .from("app_users")
-        .select("id, email, full_name, password_hash")
+        .select("id, email, full_name, password_hash, approval_status")
         .eq("email", email.toLowerCase().trim())
         .maybeSingle();
 
@@ -150,6 +192,15 @@ Deno.serve(async (req) => {
         return new Response(JSON.stringify({ error: "Invalid email or password" }), {
           status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
+      }
+
+      if ((user as { approval_status?: string }).approval_status !== "approved") {
+        return new Response(
+          JSON.stringify({
+            error: "Your account is pending approval. You will receive an email when an admin approves your request.",
+          }),
+          { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
       }
 
       const token = await createJWT(user.id, user.email);

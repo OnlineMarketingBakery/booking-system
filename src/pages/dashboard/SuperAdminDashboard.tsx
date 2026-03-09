@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
+import { useAuth } from "@/contexts/AuthContext";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
@@ -10,7 +11,7 @@ import { ChartContainer, ChartTooltip, ChartTooltipContent } from "@/components/
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { PieChart, Pie, Cell } from "recharts";
 import { useToast } from "@/hooks/use-toast";
-import { Loader2, Users, Building2, CalendarDays, Shield, Trash2 } from "lucide-react";
+import { Loader2, Users, Building2, CalendarDays, Shield, Trash2, UserPlus, Check } from "lucide-react";
 import { format } from "date-fns";
 import {
   AlertDialog,
@@ -45,10 +46,48 @@ interface UserWithRoles {
   organization_name: string | null;
 }
 
+interface PendingSignup {
+  id: string;
+  email: string | null;
+  full_name: string | null;
+  created_at: string;
+}
+
 export default function SuperAdminDashboard() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
+  const { invokeFunction, hasRole } = useAuth();
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [approvingId, setApprovingId] = useState<string | null>(null);
+
+  // Pending signups (super_admin only)
+  const { data: pendingSignups = [], refetch: refetchPending } = useQuery({
+    queryKey: ["admin-pending-signups"],
+    queryFn: async () => {
+      if (!hasRole("super_admin")) return [];
+      const data = await invokeFunction("get-pending-signups");
+      return (data?.pending || []) as PendingSignup[];
+    },
+    enabled: hasRole("super_admin"),
+  });
+
+  const approveUser = useMutation({
+    mutationFn: async (userId: string) => {
+      await invokeFunction("approve-user", { user_id: userId });
+    },
+    onMutate: (userId) => setApprovingId(userId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["admin-pending-signups"] });
+      queryClient.invalidateQueries({ queryKey: ["admin-users"] });
+      queryClient.invalidateQueries({ queryKey: ["admin-platform-stats"] });
+      toast({ title: "User approved", description: "They can now sign in. A confirmation email was sent." });
+      setApprovingId(null);
+    },
+    onError: (err: any) => {
+      toast({ title: "Failed to approve", description: err?.message, variant: "destructive" });
+      setApprovingId(null);
+    },
+  });
 
   // Fetch all profiles + roles + organizations
   const { data: users = [], isLoading } = useQuery({
@@ -211,6 +250,54 @@ export default function SuperAdminDashboard() {
         </TabsList>
 
         <TabsContent value="overview" className="space-y-6 mt-4">
+          {/* Pending signups */}
+          {pendingSignups.length > 0 && (
+            <Card className="border-primary/30">
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2 text-base">
+                  <UserPlus className="h-4 w-4" />
+                  Pending sign-ups ({pendingSignups.length})
+                </CardTitle>
+                <p className="text-sm text-muted-foreground">
+                  Approve these users so they can sign in. They will receive a confirmation email.
+                </p>
+              </CardHeader>
+              <CardContent className="p-0">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Name</TableHead>
+                      <TableHead>Email</TableHead>
+                      <TableHead>Requested</TableHead>
+                      <TableHead className="w-[100px]" />
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {pendingSignups.map((p) => (
+                      <TableRow key={p.id}>
+                        <TableCell className="font-medium">{p.full_name || "—"}</TableCell>
+                        <TableCell className="text-muted-foreground">{p.email}</TableCell>
+                        <TableCell className="text-sm text-muted-foreground">
+                          {format(new Date(p.created_at), "MMM d, yyyy")}
+                        </TableCell>
+                        <TableCell>
+                          <Button
+                            size="sm"
+                            onClick={() => approveUser.mutate(p.id)}
+                            disabled={approvingId === p.id}
+                          >
+                            {approvingId === p.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4 mr-1" />}
+                            Approve
+                          </Button>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </CardContent>
+            </Card>
+          )}
+
           {/* Stat Cards */}
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
             {statCards.map((card) => (

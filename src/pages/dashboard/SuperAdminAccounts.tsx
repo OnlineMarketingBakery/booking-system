@@ -13,6 +13,8 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
+import { useSpamProtection } from "@/hooks/useSpamProtection";
+import { SpamProtectionFields } from "@/components/SpamProtectionFields";
 import { Loader2, Plus, Pencil, Trash2, Save, CheckSquare } from "lucide-react";
 import { format } from "date-fns";
 import {
@@ -48,6 +50,7 @@ interface OwnerRow {
 export default function SuperAdminAccounts() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
+  const { validateSpamProtection, SpamProtectionFieldsProps } = useSpamProtection();
   const { invokeFunction } = useAuth();
   const [addOpen, setAddOpen] = useState(false);
   const [editOwner, setEditOwner] = useState<OwnerRow | null>(null);
@@ -253,6 +256,10 @@ export default function SuperAdminAccounts() {
   const handleAdd = (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     const form = new FormData(e.currentTarget);
+    if (!validateSpamProtection(form)) {
+      toast({ title: "Please wait a moment", description: "Then try again.", variant: "destructive" });
+      return;
+    }
     createOwner.mutate({
       name: form.get("name") as string,
       email: form.get("email") as string,
@@ -266,6 +273,10 @@ export default function SuperAdminAccounts() {
     e.preventDefault();
     if (!editOwner) return;
     const form = new FormData(e.currentTarget);
+    if (!validateSpamProtection(form)) {
+      toast({ title: "Please wait a moment", description: "Then try again.", variant: "destructive" });
+      return;
+    }
     updateOwner.mutate({
       userId: editOwner.id,
       name: form.get("name") as string,
@@ -308,6 +319,7 @@ export default function SuperAdminAccounts() {
             <DialogContent>
               <DialogHeader><DialogTitle>Create Salon Owner</DialogTitle></DialogHeader>
               <form onSubmit={handleAdd} className="space-y-4">
+                <SpamProtectionFields {...SpamProtectionFieldsProps} />
                 <div className="space-y-2">
                   <Label>Full Name</Label>
                   <Input name="name" required placeholder="Jane Doe" />
@@ -428,6 +440,7 @@ export default function SuperAdminAccounts() {
           <DialogHeader><DialogTitle>Edit Salon Owner</DialogTitle></DialogHeader>
           {editOwner && (
             <form onSubmit={handleEdit} className="space-y-4">
+              <SpamProtectionFields {...SpamProtectionFieldsProps} />
               <div className="space-y-2">
                 <Label>Full Name</Label>
                 <Input name="name" required defaultValue={editOwner.full_name || ""} />

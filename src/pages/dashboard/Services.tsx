@@ -8,6 +8,8 @@ import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
+import { useSpamProtection } from "@/hooks/useSpamProtection";
+import { SpamProtectionFields } from "@/components/SpamProtectionFields";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Plus, Scissors, Trash2, Loader2, Clock, DollarSign } from "lucide-react";
 
@@ -29,6 +31,7 @@ export default function Services() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [open, setOpen] = useState(false);
+  const { validateSpamProtection, SpamProtectionFieldsProps } = useSpamProtection();
 
   const { data: services = [], isLoading } = useQuery({
     queryKey: ["services", organization?.id],
@@ -83,6 +86,10 @@ export default function Services() {
   const handleAdd = (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     const form = new FormData(e.currentTarget);
+    if (!validateSpamProtection(form)) {
+      toast({ title: "Please wait a moment", description: "Then try adding the service again.", variant: "destructive" });
+      return;
+    }
     addService.mutate({
       name: form.get("name") as string,
       duration_minutes: parseInt(form.get("duration") as string),
@@ -106,6 +113,7 @@ export default function Services() {
           <DialogContent>
             <DialogHeader><DialogTitle>Add Service</DialogTitle></DialogHeader>
             <form onSubmit={handleAdd} className="space-y-4">
+              <SpamProtectionFields {...SpamProtectionFieldsProps} />
               <div className="space-y-2">
                 <Label>Name</Label>
                 <Input name="name" required placeholder="Haircut" maxLength={100} minLength={2} />

@@ -14,7 +14,7 @@ interface AuthContextType {
   roles: AppRole[];
   loading: boolean;
   token: string | null;
-  signUp: (email: string, password: string, fullName: string) => Promise<void>;
+  signUp: (email: string, password: string, fullName: string) => Promise<{ pending?: boolean } | void>;
   signIn: (email: string, password: string) => Promise<void>;
   signOut: () => Promise<void>;
   changePassword: (newPassword: string) => Promise<void>;
@@ -99,6 +99,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || "Sign up failed");
+
+    if (data.pending) {
+      return { pending: true };
+    }
 
     storeAuth(data.token, data.user);
     setToken(data.token);

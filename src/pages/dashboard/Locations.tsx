@@ -8,6 +8,8 @@ import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
+import { useSpamProtection } from "@/hooks/useSpamProtection";
+import { SpamProtectionFields } from "@/components/SpamProtectionFields";
 import { Plus, MapPin, Trash2, Loader2 } from "lucide-react";
 
 const TIER_LIMITS: Record<string, number> = {
@@ -21,6 +23,7 @@ export default function Locations() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [open, setOpen] = useState(false);
+  const { validateSpamProtection, SpamProtectionFieldsProps } = useSpamProtection();
 
   const tier = (organization as any)?.tier as string | undefined;
   const maxLocations = TIER_LIMITS[tier || "tier_1"] ?? 1;
@@ -79,6 +82,10 @@ export default function Locations() {
   const handleAdd = (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     const form = new FormData(e.currentTarget);
+    if (!validateSpamProtection(form)) {
+      toast({ title: "Please wait a moment", description: "Then try adding the location again.", variant: "destructive" });
+      return;
+    }
     addLocation.mutate({
       name: form.get("name") as string,
       address: form.get("address") as string,
@@ -100,6 +107,7 @@ export default function Locations() {
           <DialogContent>
             <DialogHeader><DialogTitle>Add Location</DialogTitle></DialogHeader>
             <form onSubmit={handleAdd} className="space-y-4">
+              <SpamProtectionFields {...SpamProtectionFieldsProps} />
               <div className="space-y-2">
                 <Label>Name</Label>
                 <Input name="name" required placeholder="Main Branch" maxLength={100} minLength={2} />

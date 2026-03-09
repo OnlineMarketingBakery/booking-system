@@ -11,6 +11,8 @@ import { Settings, Calendar, ExternalLink, CheckCircle2, XCircle, Pencil, Loader
 import { useSearchParams } from "react-router-dom";
 import { useEffect, useState } from "react";
 import { useToast } from "@/hooks/use-toast";
+import { useSpamProtection } from "@/hooks/useSpamProtection";
+import { SpamProtectionFields } from "@/components/SpamProtectionFields";
 import { useQueryClient } from "@tanstack/react-query";
 
 export default function SettingsPage() {
@@ -25,6 +27,7 @@ export default function SettingsPage() {
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [changingPassword, setChangingPassword] = useState(false);
+  const { validateSpamProtection, SpamProtectionFieldsProps } = useSpamProtection();
 
   const { data: gcalConnected, refetch } = useQuery({
     queryKey: ["gcal-connected-settings", user?.id],
@@ -63,6 +66,10 @@ export default function SettingsPage() {
 
   const handleChangePassword = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
+    if (!validateSpamProtection(e.currentTarget)) {
+      toast({ title: "Please wait a moment", description: "Then try again.", variant: "destructive" });
+      return;
+    }
     if (newPassword.length < 6) {
       toast({ title: "Password too short", description: "Use at least 6 characters.", variant: "destructive" });
       return;
@@ -103,6 +110,7 @@ export default function SettingsPage() {
         </CardHeader>
         <CardContent>
           <form onSubmit={handleChangePassword} className="space-y-3 max-w-sm">
+            <SpamProtectionFields {...SpamProtectionFieldsProps} />
             <div className="space-y-2">
               <Label htmlFor="new-password">New password</Label>
               <Input
@@ -155,6 +163,10 @@ export default function SettingsPage() {
                     className="flex items-center gap-2 flex-1"
                     onSubmit={async (e) => {
                       e.preventDefault();
+                      if (!validateSpamProtection(e.currentTarget)) {
+                        toast({ title: "Please wait a moment", description: "Then try again.", variant: "destructive" });
+                        return;
+                      }
                       if (!newName.trim() || !organization) return;
                       setSaving(true);
                       const { error } = await supabase
@@ -171,6 +183,7 @@ export default function SettingsPage() {
                       }
                     }}
                   >
+                    <SpamProtectionFields {...SpamProtectionFieldsProps} />
                     <Input
                       value={newName}
                       onChange={(e) => setNewName(e.target.value)}
