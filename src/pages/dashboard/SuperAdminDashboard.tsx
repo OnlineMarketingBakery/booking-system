@@ -11,7 +11,7 @@ import { ChartContainer, ChartTooltip, ChartTooltipContent } from "@/components/
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { PieChart, Pie, Cell } from "recharts";
 import { useToast } from "@/hooks/use-toast";
-import { Loader2, Users, Building2, CalendarDays, Shield, Trash2, UserPlus, Check } from "lucide-react";
+import { Loader2, Users, Building2, CalendarDays, Shield, Trash2, UserPlus, Check, X } from "lucide-react";
 import { format } from "date-fns";
 import {
   AlertDialog,
@@ -59,6 +59,7 @@ export default function SuperAdminDashboard() {
   const { invokeFunction, hasRole } = useAuth();
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [approvingId, setApprovingId] = useState<string | null>(null);
+  const [rejectingId, setRejectingId] = useState<string | null>(null);
 
   // Pending signups (super_admin only)
   const { data: pendingSignups = [], refetch: refetchPending } = useQuery({
@@ -78,8 +79,10 @@ export default function SuperAdminDashboard() {
     onMutate: (userId) => setApprovingId(userId),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["admin-pending-signups"] });
+      queryClient.invalidateQueries({ queryKey: ["admin-approved-user-ids"] });
       queryClient.invalidateQueries({ queryKey: ["admin-users"] });
       queryClient.invalidateQueries({ queryKey: ["admin-platform-stats"] });
+      queryClient.invalidateQueries({ queryKey: ["admin-salon-owners"] });
       toast({ title: "User approved", description: "They can now sign in. A confirmation email was sent." });
       setApprovingId(null);
     },
@@ -89,12 +92,47 @@ export default function SuperAdminDashboard() {
     },
   });
 
-  // Fetch all profiles + roles + organizations
-  const { data: users = [], isLoading } = useQuery({
-    queryKey: ["admin-users"],
+  const rejectUser = useMutation({
+    mutationFn: async (userId: string) => {
+      await invokeFunction("reject-user", { user_id: userId });
+    },
+    onMutate: (userId) => setRejectingId(userId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["admin-pending-signups"] });
+      queryClient.invalidateQueries({ queryKey: ["admin-approved-user-ids"] });
+      queryClient.invalidateQueries({ queryKey: ["admin-users"] });
+      queryClient.invalidateQueries({ queryKey: ["admin-platform-stats"] });
+      queryClient.invalidateQueries({ queryKey: ["admin-salon-owners"] });
+      toast({ title: "User rejected", description: "Sign-up request has been removed." });
+      setRejectingId(null);
+    },
+    onError: (err: any) => {
+      toast({ title: "Failed to reject", description: err?.message, variant: "destructive" });
+      setRejectingId(null);
+    },
+  });
+
+  // Fetch approved user IDs (pending users must not appear in All Users until approved)
+  const { data: approvedUserIds = [] } = useQuery({
+    queryKey: ["admin-approved-user-ids"],
     queryFn: async () => {
+      const { data, error } = await supabase
+        .from("app_users")
+        .select("id")
+        .eq("approval_status", "approved");
+      if (error) throw error;
+      return (data || []).map((r) => r.id);
+    },
+    enabled: hasRole("super_admin"),
+  });
+
+  // Fetch all profiles + roles + organizations (only approved users)
+  const { data: users = [], isLoading } = useQuery({
+    queryKey: ["admin-users", approvedUserIds],
+    queryFn: async () => {
+      if (approvedUserIds.length === 0) return [];
       const [profilesRes, rolesRes, orgsRes] = await Promise.all([
-        supabase.from("profiles").select("*").order("created_at", { ascending: false }),
+        supabase.from("profiles").select("*").in("id", approvedUserIds).order("created_at", { ascending: false }),
         supabase.from("user_roles").select("*"),
         supabase.from("organizations").select("id, name, owner_id"),
       ]);
@@ -114,14 +152,19 @@ export default function SuperAdminDashboard() {
         organization_name: orgs.find((o) => o.owner_id === p.id)?.name || null,
       })) as UserWithRoles[];
     },
+    enabled: hasRole("super_admin") && approvedUserIds.length >= 0,
   });
 
-  // Platform-wide stats
+  // Platform-wide stats (only approved users)
   const { data: platformStats } = useQuery({
-    queryKey: ["admin-platform-stats"],
+    queryKey: ["admin-platform-stats", approvedUserIds],
     queryFn: async () => {
+      if (approvedUserIds.length === 0) {
+        return { totalUsers: 0, totalOrgs: 0, totalBookings: 0, totalStaff: 0, statusData: [] };
+      }
+      const approvedSet = new Set(approvedUserIds);
       const [profilesRes, rolesRes, orgsRes, staffRes] = await Promise.all([
-        supabase.from("profiles").select("id", { count: "exact" }),
+        supabase.from("profiles").select("id", { count: "exact" }).in("id", approvedUserIds),
         supabase.from("user_roles").select("user_id, role"),
         supabase.from("organizations").select("id, owner_id"),
         supabase.from("staff").select("id, organization_id"),
@@ -138,7 +181,7 @@ export default function SuperAdminDashboard() {
       );
       const activeOwnerIds = new Set(
         (rolesRes.data || [])
-          .filter((r) => r.role === "salon_owner" && profileIds.has(r.user_id) && !superAdminIds.has(r.user_id))
+          .filter((r) => r.role === "salon_owner" && profileIds.has(r.user_id) && !superAdminIds.has(r.user_id) && approvedSet.has(r.user_id))
           .map((r) => r.user_id)
       );
 
@@ -269,7 +312,7 @@ export default function SuperAdminDashboard() {
                       <TableHead>Name</TableHead>
                       <TableHead>Email</TableHead>
                       <TableHead>Requested</TableHead>
-                      <TableHead className="w-[100px]" />
+                      <TableHead className="w-[180px]" />
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -280,14 +323,24 @@ export default function SuperAdminDashboard() {
                         <TableCell className="text-sm text-muted-foreground">
                           {format(new Date(p.created_at), "MMM d, yyyy")}
                         </TableCell>
-                        <TableCell>
+                        <TableCell className="flex items-center gap-2">
                           <Button
                             size="sm"
                             onClick={() => approveUser.mutate(p.id)}
-                            disabled={approvingId === p.id}
+                            disabled={approvingId === p.id || rejectingId === p.id}
                           >
                             {approvingId === p.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4 mr-1" />}
                             Approve
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="text-destructive border-destructive/50 hover:bg-destructive/10"
+                            onClick={() => rejectUser.mutate(p.id)}
+                            disabled={approvingId === p.id || rejectingId === p.id}
+                          >
+                            {rejectingId === p.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <X className="h-4 w-4 mr-1" />}
+                            Reject
                           </Button>
                         </TableCell>
                       </TableRow>

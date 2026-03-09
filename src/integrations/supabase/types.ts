@@ -16,6 +16,7 @@ export type Database = {
     Tables: {
       app_users: {
         Row: {
+          approval_status: "approved" | "pending" | null
           avatar_url: string | null
           created_at: string
           email: string
@@ -25,6 +26,7 @@ export type Database = {
           updated_at: string
         }
         Insert: {
+          approval_status?: "approved" | "pending" | null
           avatar_url?: string | null
           created_at?: string
           email: string
@@ -34,6 +36,7 @@ export type Database = {
           updated_at?: string
         }
         Update: {
+          approval_status?: "approved" | "pending" | null
           avatar_url?: string | null
           created_at?: string
           email?: string

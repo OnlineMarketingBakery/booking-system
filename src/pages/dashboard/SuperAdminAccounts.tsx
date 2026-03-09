@@ -59,9 +59,23 @@ export default function SuperAdminAccounts() {
   const [bulkTierOpen, setBulkTierOpen] = useState(false);
   const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
 
-  const { data: owners = [], isLoading } = useQuery({
-    queryKey: ["admin-salon-owners"],
+  // Only show approved users in Salon owner accounts (pending signups must not appear here)
+  const { data: approvedUserIds = [] } = useQuery({
+    queryKey: ["admin-approved-user-ids"],
     queryFn: async () => {
+      const { data, error } = await supabase
+        .from("app_users")
+        .select("id")
+        .eq("approval_status", "approved");
+      if (error) throw error;
+      return (data || []).map((r) => r.id);
+    },
+  });
+
+  const { data: owners = [], isLoading } = useQuery({
+    queryKey: ["admin-salon-owners", approvedUserIds],
+    queryFn: async () => {
+      const approvedSet = new Set(approvedUserIds);
       const [rolesRes, superAdminRes] = await Promise.all([
         supabase.from("user_roles").select("user_id").eq("role", "salon_owner"),
         supabase.from("user_roles").select("user_id").eq("role", "super_admin"),
@@ -72,7 +86,7 @@ export default function SuperAdminAccounts() {
       const superAdminIds = new Set((superAdminRes.data || []).map((r) => r.user_id));
       const ownerIds = (rolesRes.data || [])
         .map((r) => r.user_id)
-        .filter((id) => !superAdminIds.has(id));
+        .filter((id) => !superAdminIds.has(id) && approvedSet.has(id));
       if (ownerIds.length === 0) return [];
 
       const [profilesRes, orgsRes] = await Promise.all([
@@ -96,6 +110,7 @@ export default function SuperAdminAccounts() {
         };
       }) as OwnerRow[];
     },
+    enabled: approvedUserIds.length >= 0,
   });
 
   const allSelected = owners.length > 0 && selectedIds.size === owners.length;
