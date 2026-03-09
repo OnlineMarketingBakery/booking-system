@@ -150,33 +150,27 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   const requestPasswordReset = async (email: string) => {
-    const res = await fetch(FUNCTION_URL, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action: "request-password-reset", email: email.trim() }),
+    const { data, error } = await supabase.functions.invoke("auth-custom", {
+      body: { action: "request-password-reset", email: email.trim() },
     });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || "Request failed");
+    if (error) throw new Error(error.message || "Request failed");
+    if (data?.error) throw new Error(data.error);
   };
 
   const setNewPassword = async (resetToken: string, newPassword: string) => {
-    const res = await fetch(FUNCTION_URL, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action: "set-new-password", reset_token: resetToken, new_password: newPassword }),
+    const { data, error } = await supabase.functions.invoke("auth-custom", {
+      body: { action: "set-new-password", reset_token: resetToken, new_password: newPassword },
     });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || "Failed to set password");
+    if (error) throw new Error(error.message || "Failed to set password");
+    if (data?.error) throw new Error(data.error);
   };
 
   const confirmPasswordChange = async (confirmToken: string) => {
-    const res = await fetch(FUNCTION_URL, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action: "confirm-password-change", confirm_token: confirmToken }),
+    const { data, error } = await supabase.functions.invoke("auth-custom", {
+      body: { action: "confirm-password-change", confirm_token: confirmToken },
     });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || "Confirmation failed");
+    if (error) throw new Error(error.message || "Confirmation failed");
+    if (data?.error) throw new Error(data.error);
   };
 
   const hasRole = (role: AppRole) => roles.includes(role);
