@@ -5,7 +5,6 @@ import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { Card, CardContent } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -37,14 +36,17 @@ const TIER_LABELS: Record<OrgTier, string> = {
   tier_3: "Tier 3 (100 locations)",
 };
 
-interface OwnerRow {
+/** One row = one salon (organization) created by a tenant, with owner info */
+interface SalonRow {
   id: string;
-  full_name: string | null;
-  email: string | null;
-  created_at: string;
-  organization_id: string | null;
-  organization_name: string | null;
+  name: string;
+  slug: string;
+  owner_id: string;
+  owner_name: string | null;
+  owner_email: string | null;
   tier: OrgTier | null;
+  locations_count: number;
+  created_at: string;
 }
 
 export default function SuperAdminAccounts() {
@@ -53,13 +55,12 @@ export default function SuperAdminAccounts() {
   const { validateSpamProtection, SpamProtectionFieldsProps } = useSpamProtection();
   const { invokeFunction } = useAuth();
   const [addOpen, setAddOpen] = useState(false);
-  const [editOwner, setEditOwner] = useState<OwnerRow | null>(null);
+  const [editSalon, setEditSalon] = useState<SalonRow | null>(null);
   const [pendingTierChanges, setPendingTierChanges] = useState<Record<string, OrgTier>>({});
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [bulkTierOpen, setBulkTierOpen] = useState(false);
   const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
 
-  // Only show approved users in Salon owner accounts (pending signups must not appear here)
   const { data: approvedUserIds = [] } = useQuery({
     queryKey: ["admin-approved-user-ids"],
     queryFn: async () => {
@@ -72,55 +73,68 @@ export default function SuperAdminAccounts() {
     },
   });
 
-  const { data: owners = [], isLoading } = useQuery({
-    queryKey: ["admin-salon-owners", approvedUserIds],
+  const { data: salons = [], isLoading } = useQuery({
+    queryKey: ["admin-salons", approvedUserIds],
     queryFn: async () => {
       const approvedSet = new Set(approvedUserIds);
-      const [rolesRes, superAdminRes] = await Promise.all([
+      const [rolesRes, superAdminRes, orgsRes, locationsRes] = await Promise.all([
         supabase.from("user_roles").select("user_id").eq("role", "salon_owner"),
         supabase.from("user_roles").select("user_id").eq("role", "super_admin"),
+        supabase.from("organizations").select("id, name, slug, owner_id, tier, created_at"),
+        supabase.from("locations").select("organization_id"),
       ]);
       if (rolesRes.error) throw rolesRes.error;
       if (superAdminRes.error) throw superAdminRes.error;
+      if (orgsRes.error) throw orgsRes.error;
+      if (locationsRes.error) throw locationsRes.error;
 
       const superAdminIds = new Set((superAdminRes.data || []).map((r) => r.user_id));
       const ownerIds = (rolesRes.data || [])
         .map((r) => r.user_id)
         .filter((id) => !superAdminIds.has(id) && approvedSet.has(id));
-      if (ownerIds.length === 0) return [];
+      const ownerIdSet = new Set(ownerIds);
+      const orgs = (orgsRes.data || []).filter((o) => ownerIdSet.has(o.owner_id));
+      if (orgs.length === 0) return [];
 
-      const [profilesRes, orgsRes] = await Promise.all([
-        supabase.from("profiles").select("*").in("id", ownerIds),
-        supabase.from("organizations").select("id, name, owner_id, tier"),
-      ]);
-      if (profilesRes.error) throw profilesRes.error;
+      const locationCountByOrg: Record<string, number> = {};
+      (locationsRes.data || []).forEach((loc: { organization_id: string }) => {
+        locationCountByOrg[loc.organization_id] = (locationCountByOrg[loc.organization_id] ?? 0) + 1;
+      });
 
-      const orgs = orgsRes.data || [];
+      const ownerIdsFromOrgs = [...new Set(orgs.map((o) => o.owner_id))];
+      const { data: profiles } = await supabase
+        .from("profiles")
+        .select("id, full_name, email")
+        .in("id", ownerIdsFromOrgs);
 
-      return (profilesRes.data || []).map((p) => {
-        const org = orgs.find((o) => o.owner_id === p.id);
+      const profileMap = new Map((profiles || []).map((p) => [p.id, p]));
+
+      return orgs.map((org) => {
+        const profile = profileMap.get(org.owner_id);
         return {
-          id: p.id,
-          full_name: p.full_name,
-          email: p.email,
-          created_at: p.created_at,
-          organization_id: org?.id || null,
-          organization_name: org?.name || null,
-          tier: (org?.tier as OrgTier) || null,
+          id: org.id,
+          name: org.name,
+          slug: org.slug,
+          owner_id: org.owner_id,
+          owner_name: profile?.full_name ?? null,
+          owner_email: profile?.email ?? null,
+          tier: (org.tier as OrgTier) ?? null,
+          locations_count: locationCountByOrg[org.id] ?? 0,
+          created_at: org.created_at,
         };
-      }) as OwnerRow[];
+      }) as SalonRow[];
     },
     enabled: approvedUserIds.length >= 0,
   });
 
-  const allSelected = owners.length > 0 && selectedIds.size === owners.length;
-  const someSelected = selectedIds.size > 0 && selectedIds.size < owners.length;
+  const allSelected = salons.length > 0 && selectedIds.size === salons.length;
+  const someSelected = selectedIds.size > 0 && selectedIds.size < salons.length;
 
   const toggleSelectAll = () => {
     if (allSelected) {
       setSelectedIds(new Set());
     } else {
-      setSelectedIds(new Set(owners.map((o) => o.id)));
+      setSelectedIds(new Set(salons.map((s) => s.id)));
     }
   };
 
@@ -133,29 +147,27 @@ export default function SuperAdminAccounts() {
     });
   };
 
-  const selectedOwners = useMemo(
-    () => owners.filter((o) => selectedIds.has(o.id)),
-    [owners, selectedIds]
+  const selectedSalons = useMemo(
+    () => salons.filter((s) => selectedIds.has(s.id)),
+    [salons, selectedIds]
   );
 
-  // Create salon owner via edge function
   const createOwner = useMutation({
     mutationFn: async (vals: { name: string; email: string; password: string; orgName: string; tier: OrgTier }) => {
       return await invokeFunction("create-salon-owner", vals);
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["admin-salon-owners"] });
+      queryClient.invalidateQueries({ queryKey: ["admin-salons"] });
       queryClient.invalidateQueries({ queryKey: ["admin-users"] });
       queryClient.invalidateQueries({ queryKey: ["admin-platform-stats"] });
       setAddOpen(false);
-      toast({ title: "Salon owner created" });
+      toast({ title: "Salon created" });
     },
     onError: (err: any) => {
-      toast({ title: "Failed to create owner", description: err.message, variant: "destructive" });
+      toast({ title: "Failed to create salon", description: err.message, variant: "destructive" });
     },
   });
 
-  // Batch update tiers
   const saveTierChanges = useMutation({
     mutationFn: async (changes: Record<string, OrgTier>) => {
       const updates = Object.entries(changes).map(([orgId, tier]) =>
@@ -166,22 +178,19 @@ export default function SuperAdminAccounts() {
       if (failed?.error) throw failed.error;
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["admin-salon-owners"] });
+      queryClient.invalidateQueries({ queryKey: ["admin-salons"] });
       setPendingTierChanges({});
-      toast({ title: "All changes saved successfully" });
+      toast({ title: "Tier changes saved" });
     },
     onError: (err: any) => {
       toast({ title: "Failed to save changes", description: err.message, variant: "destructive" });
     },
   });
 
-  // Bulk change tier
   const bulkChangeTier = useMutation({
     mutationFn: async (tier: OrgTier) => {
-      const orgIds = selectedOwners
-        .filter((o) => o.organization_id)
-        .map((o) => o.organization_id!);
-      if (orgIds.length === 0) throw new Error("No organizations to update");
+      const orgIds = selectedSalons.map((s) => s.id);
+      if (orgIds.length === 0) throw new Error("No salons selected");
       const updates = orgIds.map((orgId) =>
         supabase.from("organizations").update({ tier }).eq("id", orgId)
       );
@@ -190,32 +199,35 @@ export default function SuperAdminAccounts() {
       if (failed?.error) throw failed.error;
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["admin-salon-owners"] });
+      queryClient.invalidateQueries({ queryKey: ["admin-salons"] });
       setSelectedIds(new Set());
       setBulkTierOpen(false);
-      toast({ title: `Tier updated for ${selectedOwners.length} owner(s)` });
+      toast({ title: `Tier updated for ${selectedSalons.length} salon(s)` });
     },
     onError: (err: any) => {
       toast({ title: "Failed to update tiers", description: err.message, variant: "destructive" });
     },
   });
 
-  // Bulk delete
   const bulkDelete = useMutation({
     mutationFn: async () => {
-      const ids = Array.from(selectedIds);
-      const results = await Promise.all(
-        ids.map((id) => invokeFunction("admin-delete-user", { user_id: id }))
-      );
-      return results;
+      const orgIds = Array.from(selectedIds);
+      for (const orgId of orgIds) {
+        const { error: delOrgErr } = await supabase.from("organizations").delete().eq("id", orgId);
+        if (delOrgErr) throw delOrgErr;
+      }
+      const ownerIds = [...new Set(selectedSalons.map((s) => s.owner_id))];
+      for (const userId of ownerIds) {
+        await invokeFunction("admin-delete-user", { user_id: userId });
+      }
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["admin-salon-owners"] });
+      queryClient.invalidateQueries({ queryKey: ["admin-salons"] });
       queryClient.invalidateQueries({ queryKey: ["admin-users"] });
       queryClient.invalidateQueries({ queryKey: ["admin-platform-stats"] });
       setSelectedIds(new Set());
       setBulkDeleteOpen(false);
-      toast({ title: `${selectedIds.size} owner(s) deleted` });
+      toast({ title: `${selectedSalons.length} salon(s) deleted` });
     },
     onError: (err: any) => {
       toast({ title: "Failed to delete", description: err.message, variant: "destructive" });
@@ -224,44 +236,49 @@ export default function SuperAdminAccounts() {
 
   const hasPendingChanges = Object.keys(pendingTierChanges).length > 0;
 
-  // Update owner profile
-  const updateOwner = useMutation({
-    mutationFn: async ({ userId, name, orgId, orgName, tier }: { userId: string; name: string; orgId: string | null; orgName: string; tier: OrgTier }) => {
-      const { error: profileErr } = await supabase
-        .from("profiles")
-        .update({ full_name: name })
-        .eq("id", userId);
-      if (profileErr) throw profileErr;
+  const updateSalon = useMutation({
+    mutationFn: async (payload: {
+      orgId: string;
+      orgName: string;
+      tier: OrgTier;
+      ownerId: string;
+      ownerName: string;
+      newPassword?: string;
+    }) => {
+      const { error: orgErr } = await supabase
+        .from("organizations")
+        .update({ name: payload.orgName, tier: payload.tier })
+        .eq("id", payload.orgId);
+      if (orgErr) throw orgErr;
 
-      if (orgId) {
-        const { error: orgErr } = await supabase
-          .from("organizations")
-          .update({ name: orgName, tier })
-          .eq("id", orgId);
-        if (orgErr) throw orgErr;
-      }
+      await invokeFunction("admin-update-user", {
+        user_id: payload.ownerId,
+        full_name: payload.ownerName,
+        ...(payload.newPassword && payload.newPassword.length >= 6 ? { new_password: payload.newPassword } : {}),
+      });
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["admin-salon-owners"] });
+      queryClient.invalidateQueries({ queryKey: ["admin-salons"] });
       queryClient.invalidateQueries({ queryKey: ["admin-users"] });
-      setEditOwner(null);
-      toast({ title: "Owner updated" });
+      setEditSalon(null);
+      toast({ title: "Salon and owner updated" });
     },
     onError: (err: any) => {
       toast({ title: "Failed to update", description: err.message, variant: "destructive" });
     },
   });
 
-  // Delete owner
-  const deleteOwner = useMutation({
-    mutationFn: async (userId: string) => {
-      await invokeFunction("admin-delete-user", { user_id: userId });
+  const deleteSalon = useMutation({
+    mutationFn: async (salon: SalonRow) => {
+      const { error: delOrgErr } = await supabase.from("organizations").delete().eq("id", salon.id);
+      if (delOrgErr) throw delOrgErr;
+      await invokeFunction("admin-delete-user", { user_id: salon.owner_id });
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["admin-salon-owners"] });
+      queryClient.invalidateQueries({ queryKey: ["admin-salons"] });
       queryClient.invalidateQueries({ queryKey: ["admin-users"] });
       queryClient.invalidateQueries({ queryKey: ["admin-platform-stats"] });
-      toast({ title: "Owner deleted" });
+      toast({ title: "Salon deleted" });
     },
     onError: (err: any) => {
       toast({ title: "Failed to delete", description: err.message, variant: "destructive" });
@@ -286,18 +303,20 @@ export default function SuperAdminAccounts() {
 
   const handleEdit = (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
-    if (!editOwner) return;
+    if (!editSalon) return;
     const form = new FormData(e.currentTarget);
     if (!validateSpamProtection(form)) {
       toast({ title: "Please wait a moment", description: "Then try again.", variant: "destructive" });
       return;
     }
-    updateOwner.mutate({
-      userId: editOwner.id,
-      name: form.get("name") as string,
-      orgId: editOwner.organization_id,
-      orgName: form.get("orgName") as string,
+    const newPassword = (form.get("newPassword") as string)?.trim() || undefined;
+    updateSalon.mutate({
+      orgId: editSalon.id,
+      orgName: (form.get("orgName") as string) || editSalon.name,
       tier: (form.get("tier") as OrgTier) || "tier_1",
+      ownerId: editSalon.owner_id,
+      ownerName: (form.get("ownerName") as string) || editSalon.owner_name || "",
+      newPassword: newPassword && newPassword.length >= 6 ? newPassword : undefined,
     });
   };
 
@@ -313,8 +332,8 @@ export default function SuperAdminAccounts() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-lg font-semibold">Salon Owner Accounts</h2>
-          <p className="text-sm text-muted-foreground">Add, edit, or remove salon owners and assign tiers</p>
+          <h2 className="text-lg font-semibold">Tenant Salons</h2>
+          <p className="text-sm text-muted-foreground">Manage salons created by tenants: change tier, edit details, or reset owner password</p>
         </div>
         <div className="flex gap-2">
           {hasPendingChanges && (
@@ -329,10 +348,10 @@ export default function SuperAdminAccounts() {
           )}
           <Dialog open={addOpen} onOpenChange={setAddOpen}>
             <DialogTrigger asChild>
-              <Button><Plus className="mr-2 h-4 w-4" />Add Owner</Button>
+              <Button><Plus className="mr-2 h-4 w-4" />Add Salon</Button>
             </DialogTrigger>
             <DialogContent>
-              <DialogHeader><DialogTitle>Create Salon Owner</DialogTitle></DialogHeader>
+              <DialogHeader><DialogTitle>Create Salon</DialogTitle></DialogHeader>
               <form onSubmit={handleAdd} className="space-y-4">
                 <SpamProtectionFields {...SpamProtectionFieldsProps} />
                 <div className="space-y-2">
@@ -377,21 +396,20 @@ export default function SuperAdminAccounts() {
         <div className="flex items-center gap-3 rounded-lg border border-primary/20 bg-primary/5 px-4 py-3">
           <CheckSquare className="h-4 w-4 text-primary" />
           <span className="text-sm font-medium">
-            {selectedIds.size} owner{selectedIds.size > 1 ? "s" : ""} selected
+            {selectedIds.size} salon{selectedIds.size > 1 ? "s" : ""} selected
           </span>
           <div className="ml-auto flex gap-2">
-            {/* Bulk Tier Change */}
             <Dialog open={bulkTierOpen} onOpenChange={setBulkTierOpen}>
               <DialogTrigger asChild>
                 <Button variant="outline" size="sm">Change Tier</Button>
               </DialogTrigger>
               <DialogContent>
                 <DialogHeader>
-                  <DialogTitle>Change Tier for {selectedIds.size} Owner{selectedIds.size > 1 ? "s" : ""}</DialogTitle>
+                  <DialogTitle>Change Tier for {selectedIds.size} Salon{selectedIds.size > 1 ? "s" : ""}</DialogTitle>
                 </DialogHeader>
                 <div className="space-y-4">
                   <p className="text-sm text-muted-foreground">
-                    This will update the subscription tier for all selected owners' organizations.
+                    This will update the subscription tier for all selected salons.
                   </p>
                   <div className="grid grid-cols-1 gap-2">
                     {(["tier_1", "tier_2", "tier_3"] as OrgTier[]).map((tier) => (
@@ -423,9 +441,9 @@ export default function SuperAdminAccounts() {
               </AlertDialogTrigger>
               <AlertDialogContent>
                 <AlertDialogHeader>
-                  <AlertDialogTitle>Delete {selectedIds.size} salon owner{selectedIds.size > 1 ? "s" : ""}?</AlertDialogTitle>
+                  <AlertDialogTitle>Delete {selectedIds.size} salon{selectedIds.size > 1 ? "s" : ""}?</AlertDialogTitle>
                   <AlertDialogDescription>
-                    This will permanently delete the selected owners and all their data. This action cannot be undone.
+                    This will permanently delete the selected salons and their owner accounts. This action cannot be undone.
                   </AlertDialogDescription>
                 </AlertDialogHeader>
                 <AlertDialogFooter>
@@ -436,7 +454,7 @@ export default function SuperAdminAccounts() {
                     disabled={bulkDelete.isPending}
                   >
                     {bulkDelete.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                    Delete {selectedIds.size} Owner{selectedIds.size > 1 ? "s" : ""}
+                    Delete {selectedIds.size} Salon{selectedIds.size > 1 ? "s" : ""}
                   </AlertDialogAction>
                 </AlertDialogFooter>
               </AlertDialogContent>
@@ -449,28 +467,20 @@ export default function SuperAdminAccounts() {
         </div>
       )}
 
-      {/* Edit Dialog */}
-      <Dialog open={!!editOwner} onOpenChange={(open) => !open && setEditOwner(null)}>
+      {/* Edit Salon & Owner Dialog */}
+      <Dialog open={!!editSalon} onOpenChange={(open) => !open && setEditSalon(null)}>
         <DialogContent>
-          <DialogHeader><DialogTitle>Edit Salon Owner</DialogTitle></DialogHeader>
-          {editOwner && (
+          <DialogHeader><DialogTitle>Edit Salon & Owner</DialogTitle></DialogHeader>
+          {editSalon && (
             <form onSubmit={handleEdit} className="space-y-4">
               <SpamProtectionFields {...SpamProtectionFieldsProps} />
               <div className="space-y-2">
-                <Label>Full Name</Label>
-                <Input name="name" required defaultValue={editOwner.full_name || ""} />
-              </div>
-              <div className="space-y-2">
-                <Label>Email</Label>
-                <Input value={editOwner.email || ""} disabled className="opacity-60" />
-              </div>
-              <div className="space-y-2">
-                <Label>Organization Name</Label>
-                <Input name="orgName" required defaultValue={editOwner.organization_name || ""} />
+                <Label>Salon Name</Label>
+                <Input name="orgName" required defaultValue={editSalon.name} />
               </div>
               <div className="space-y-2">
                 <Label>Tier</Label>
-                <Select name="tier" defaultValue={editOwner.tier || "tier_1"}>
+                <Select name="tier" defaultValue={editSalon.tier || "tier_1"}>
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="tier_1">{TIER_LABELS.tier_1}</SelectItem>
@@ -479,8 +489,23 @@ export default function SuperAdminAccounts() {
                   </SelectContent>
                 </Select>
               </div>
-              <Button type="submit" className="w-full" disabled={updateOwner.isPending}>
-                {updateOwner.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              <div className="border-t pt-4 space-y-2">
+                <Label className="text-muted-foreground">Owner details</Label>
+                <div className="space-y-2">
+                  <Label>Owner Name</Label>
+                  <Input name="ownerName" required defaultValue={editSalon.owner_name || ""} />
+                </div>
+                <div className="space-y-2">
+                  <Label>Email</Label>
+                  <Input value={editSalon.owner_email || ""} disabled className="opacity-60" />
+                </div>
+                <div className="space-y-2">
+                  <Label>New Password (optional)</Label>
+                  <Input name="newPassword" type="password" minLength={6} placeholder="Leave blank to keep current" />
+                </div>
+              </div>
+              <Button type="submit" className="w-full" disabled={updateSalon.isPending}>
+                {updateSalon.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
                 Save Changes
               </Button>
             </form>
@@ -501,78 +526,67 @@ export default function SuperAdminAccounts() {
                     className={someSelected ? "data-[state=unchecked]:bg-primary/20" : ""}
                   />
                 </TableHead>
-                <TableHead>Name</TableHead>
+                <TableHead>Salon</TableHead>
+                <TableHead>Owner</TableHead>
                 <TableHead>Email</TableHead>
-                <TableHead>Organization</TableHead>
                 <TableHead>Tier</TableHead>
-                <TableHead>Joined</TableHead>
+                <TableHead>Locations</TableHead>
+                <TableHead>Created</TableHead>
                 <TableHead className="w-[100px]" />
               </TableRow>
             </TableHeader>
             <TableBody>
-              {owners.length === 0 ? (
+              {salons.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={7} className="text-center text-muted-foreground py-6">
-                    No salon owners yet
+                  <TableCell colSpan={8} className="text-center text-muted-foreground py-6">
+                    No salons yet
                   </TableCell>
                 </TableRow>
               ) : (
-                owners.map((o) => (
-                  <TableRow key={o.id} className={cn(selectedIds.has(o.id) && "bg-primary/5")}>
+                salons.map((s) => (
+                  <TableRow key={s.id} className={cn(selectedIds.has(s.id) && "bg-primary/5")}>
                     <TableCell>
                       <Checkbox
-                        checked={selectedIds.has(o.id)}
-                        onCheckedChange={() => toggleSelect(o.id)}
-                        aria-label={`Select ${o.full_name || o.email}`}
+                        checked={selectedIds.has(s.id)}
+                        onCheckedChange={() => toggleSelect(s.id)}
+                        aria-label={`Select ${s.name}`}
                       />
                     </TableCell>
-                    <TableCell className="font-medium">{o.full_name || "—"}</TableCell>
-                    <TableCell className="text-muted-foreground">{o.email}</TableCell>
+                    <TableCell className="font-medium">{s.name}</TableCell>
+                    <TableCell className="text-muted-foreground">{s.owner_name || "—"}</TableCell>
+                    <TableCell className="text-muted-foreground text-sm">{s.owner_email || "—"}</TableCell>
                     <TableCell>
-                      {o.organization_name ? (
-                        <Badge variant="outline">{o.organization_name}</Badge>
-                      ) : (
-                        <span className="text-muted-foreground text-sm">No org</span>
-                      )}
-                    </TableCell>
-                    <TableCell>
-                      {o.tier ? (
-                        <Select
-                          value={o.organization_id && pendingTierChanges[o.organization_id] ? pendingTierChanges[o.organization_id] : o.tier}
-                          onValueChange={(val) => {
-                            if (o.organization_id) {
-                              setPendingTierChanges((prev) => {
-                                const next = { ...prev };
-                                if (val === o.tier) {
-                                  delete next[o.organization_id!];
-                                } else {
-                                  next[o.organization_id!] = val as OrgTier;
-                                }
-                                return next;
-                              });
+                      <Select
+                        value={pendingTierChanges[s.id] ?? s.tier ?? "tier_1"}
+                        onValueChange={(val) => {
+                          setPendingTierChanges((prev) => {
+                            const next = { ...prev };
+                            if (val === (s.tier ?? "tier_1")) {
+                              delete next[s.id];
+                            } else {
+                              next[s.id] = val as OrgTier;
                             }
-                          }}
-                          disabled={!o.organization_id}
-                        >
-                          <SelectTrigger className={cn("w-[150px] h-8 text-xs", o.organization_id && pendingTierChanges[o.organization_id] && "border-primary ring-1 ring-primary")}>
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="tier_1">Tier 1</SelectItem>
-                            <SelectItem value="tier_2">Tier 2</SelectItem>
-                            <SelectItem value="tier_3">Tier 3</SelectItem>
-                          </SelectContent>
-                        </Select>
-                      ) : (
-                        <span className="text-muted-foreground text-sm">—</span>
-                      )}
+                            return next;
+                          });
+                        }}
+                      >
+                        <SelectTrigger className={cn("w-[150px] h-8 text-xs", pendingTierChanges[s.id] && "border-primary ring-1 ring-primary")}>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="tier_1">Tier 1</SelectItem>
+                          <SelectItem value="tier_2">Tier 2</SelectItem>
+                          <SelectItem value="tier_3">Tier 3</SelectItem>
+                        </SelectContent>
+                      </Select>
                     </TableCell>
+                    <TableCell className="text-sm text-muted-foreground">{s.locations_count}</TableCell>
                     <TableCell className="text-sm text-muted-foreground">
-                      {format(new Date(o.created_at), "MMM d, yyyy")}
+                      {format(new Date(s.created_at), "MMM d, yyyy")}
                     </TableCell>
                     <TableCell>
                       <div className="flex gap-1">
-                        <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => setEditOwner(o)}>
+                        <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => setEditSalon(s)}>
                           <Pencil className="h-4 w-4" />
                         </Button>
                         <AlertDialog>
@@ -583,16 +597,16 @@ export default function SuperAdminAccounts() {
                           </AlertDialogTrigger>
                           <AlertDialogContent>
                             <AlertDialogHeader>
-                              <AlertDialogTitle>Delete salon owner?</AlertDialogTitle>
+                              <AlertDialogTitle>Delete salon?</AlertDialogTitle>
                               <AlertDialogDescription>
-                                This will permanently delete {o.full_name || o.email} and all their data.
+                                This will permanently delete {s.name} and the owner account ({s.owner_email}).
                               </AlertDialogDescription>
                             </AlertDialogHeader>
                             <AlertDialogFooter>
                               <AlertDialogCancel>Cancel</AlertDialogCancel>
                               <AlertDialogAction
                                 className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-                                onClick={() => deleteOwner.mutate(o.id)}
+                                onClick={() => deleteSalon.mutate(s)}
                               >
                                 Delete
                               </AlertDialogAction>
