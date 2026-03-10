@@ -438,6 +438,63 @@ export type Database = {
           },
         ]
       }
+      staff_invitations: {
+        Row: {
+          id: string
+          organization_id: string
+          email: string
+          status: string
+          token: string
+          staff_id: string | null
+          invited_at: string
+          accepted_at: string | null
+          rejected_at: string | null
+          expires_at: string | null
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          organization_id: string
+          email: string
+          status?: string
+          token: string
+          staff_id?: string | null
+          invited_at?: string
+          accepted_at?: string | null
+          rejected_at?: string | null
+          expires_at?: string | null
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          organization_id?: string
+          email?: string
+          status?: string
+          token?: string
+          staff_id?: string | null
+          invited_at?: string
+          accepted_at?: string | null
+          rejected_at?: string | null
+          expires_at?: string | null
+          created_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "staff_invitations_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "staff_invitations_staff_id_fkey"
+            columns: ["staff_id"]
+            isOneToOne: false
+            referencedRelation: "staff"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       staff_locations: {
         Row: {
           created_at: string

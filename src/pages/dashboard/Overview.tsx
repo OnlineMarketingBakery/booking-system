@@ -56,6 +56,11 @@ export default function Overview() {
       const totalStaff = staffRes.count ?? 0;
       const totalServices = servicesRes.count ?? 0;
 
+      // Revenue from completed (and paid) bookings — total amount collected from those bookings
+      const revenueFromCompletedBookings = (bookings as any[])
+        .filter((b) => b.status === "completed" || b.status === "paid")
+        .reduce((sum, b) => sum + Number((b.services as any)?.price ?? 0), 0);
+
       // Recent bookings (last 5)
       const recentBookings = bookings.slice(0, 5);
 
@@ -84,21 +89,9 @@ export default function Overview() {
         .sort((a, b) => b.value - a.value)
         .slice(0, 6);
 
-      return { totalBookings, upcoming, totalStaff, totalServices, recentBookings, statusData, staffData, serviceData };
+      return { totalBookings, upcoming, totalStaff, totalServices, revenueFromCompletedBookings, recentBookings, statusData, staffData, serviceData };
     },
     enabled: !!organization,
-  });
-
-  // Fetch revenue directly from Stripe
-  const { data: revenueData } = useQuery({
-    queryKey: ["stripe-revenue", organization?.id],
-    queryFn: async () => {
-      const { data, error } = await supabase.functions.invoke("get-revenue");
-      if (error) throw error;
-      return data as { db_revenue: number; stripe_revenue: number };
-    },
-    enabled: !!organization,
-    refetchInterval: 15_000,
   });
 
   if (orgLoading) return null;
@@ -123,7 +116,7 @@ export default function Overview() {
   }
 
   const cards = [
-    { title: "Revenue Collected", value: `$${(revenueData?.stripe_revenue ?? 0).toFixed(2)}`, icon: DollarSign, color: "text-accent-foreground" },
+    { title: "Revenue Collected", value: `$${(stats?.revenueFromCompletedBookings ?? 0).toFixed(2)}`, icon: DollarSign, color: "text-accent-foreground" },
     { title: "Total Bookings", value: stats?.totalBookings ?? 0, icon: CalendarDays, color: "text-primary" },
     { title: "Upcoming", value: stats?.upcoming ?? 0, icon: TrendingUp, color: "text-accent-foreground" },
     { title: "Staff Members", value: stats?.totalStaff ?? 0, icon: Users, color: "text-primary" },

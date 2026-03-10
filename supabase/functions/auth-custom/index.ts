@@ -278,6 +278,41 @@ Deno.serve(async (req) => {
           headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
       }
+      // Enforce once per 24 hours per user
+      const { data: rateLimitRow, error: rateLimitErr } = await admin
+        .from("password_reset_rate_limit")
+        .select("last_requested_at")
+        .eq("user_id", appUser.id)
+        .maybeSingle();
+      if (rateLimitErr) {
+        console.error("[auth-custom] request-password-reset rate limit check error:", rateLimitErr);
+        return new Response(
+          JSON.stringify({ error: "We couldn't process your request. Please try again later." }),
+          { status: 503, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+      const nowMs = Date.now();
+      const oneDayMs = 24 * 60 * 60 * 1000;
+      if (rateLimitRow?.last_requested_at) {
+        const lastMs = new Date(rateLimitRow.last_requested_at).getTime();
+        if (nowMs - lastMs < oneDayMs) {
+          return new Response(
+            JSON.stringify({ error: "You can only request a password reset once per day. Please try again later." }),
+            { status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+          );
+        }
+      }
+      const { error: upsertErr } = await admin.from("password_reset_rate_limit").upsert(
+        { user_id: appUser.id, last_requested_at: new Date().toISOString() },
+        { onConflict: "user_id" }
+      );
+      if (upsertErr) {
+        console.error("[auth-custom] request-password-reset rate limit upsert error:", upsertErr);
+        return new Response(
+          JSON.stringify({ error: "We couldn't process your request. Please try again later." }),
+          { status: 503, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
       const resetToken = crypto.randomUUID();
       const { error: insertErr } = await admin.from("password_reset_tokens").insert({
         user_id: appUser.id,
@@ -367,11 +402,12 @@ Deno.serve(async (req) => {
         expires_at: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
       });
       await admin.from("password_reset_tokens").delete().eq("token", reset_token);
-      // Apply new password immediately so old password stops working right away
-      const { error: updatePwdErr } = await admin.from("app_users").update({ password_hash: passwordHash }).eq("id", row.user_id);
-      if (updatePwdErr) {
-        console.error("[auth-custom] set-new-password update app_users error:", updatePwdErr);
-        throw updatePwdErr;
+      // Lock account: set password to an unguessable hash so neither old nor new password works until they confirm
+      const lockHash = await hashPassword(crypto.randomUUID() + crypto.randomUUID());
+      const { error: lockErr } = await admin.from("app_users").update({ password_hash: lockHash }).eq("id", row.user_id);
+      if (lockErr) {
+        console.error("[auth-custom] set-new-password lock account error:", lockErr);
+        throw lockErr;
       }
       const { data: userRow } = await admin.from("app_users").select("email, full_name").eq("id", row.user_id).single();
       const resendKeyConfirm = Deno.env.get("RESEND_API_KEY");
@@ -385,17 +421,17 @@ Deno.serve(async (req) => {
           const resendConfirm = new Resend(resendKeyConfirm);
           const htmlConfirm = `
             <div style="font-family: Arial, sans-serif; max-width: 500px; margin: 0 auto; padding: 24px;">
-              <h1 style="color: #7c3aed;">Your password has been changed</h1>
+              <h1 style="color: #7c3aed;">Confirm your password change</h1>
               <p>Hi ${userName},</p>
-              <p>Your Salonora account password was changed successfully. You can now sign in with your new password.</p>
-              ${confirmUrl ? `<p><a href="${confirmUrl}" style="display: inline-block; background: #7c3aed; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px;">Confirm this change</a></p>` : ""}
-              <p style="color: #6b7280; font-size: 14px;">If you didn't make this change, use "Forgot password" to set a new one.</p>
+              <p>You requested a new password for your Salonora account. Click the link below to confirm and activate it. Until you confirm, you cannot sign in.</p>
+              ${confirmUrl ? `<p><a href="${confirmUrl}" style="display: inline-block; background: #7c3aed; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px;">Confirm password change</a></p>` : ""}
+              <p style="color: #6b7280; font-size: 14px;">If you didn't request this, use "Forgot password" to set a new one.</p>
             </div>
           `;
           const { error: resendErr } = await resendConfirm.emails.send({
             from: `${fromNameConfirm} <${fromEmailConfirm}>`,
             to: [userRow.email],
-            subject: "Your password has been changed - Salonora",
+            subject: "Confirm your password change - Salonora",
             html: htmlConfirm,
           });
           if (resendErr) console.error("[auth-custom] confirm email Resend error:", resendErr);
@@ -403,7 +439,7 @@ Deno.serve(async (req) => {
           console.error("[auth-custom] send confirm email error:", e);
         }
       }
-      return new Response(JSON.stringify({ success: true, message: "Your password has been updated. You can sign in with your new password. We've sent a confirmation email." }), {
+      return new Response(JSON.stringify({ success: true, message: "Check your email and click the link to confirm your new password. Until you confirm, you cannot sign in." }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
@@ -417,7 +453,7 @@ Deno.serve(async (req) => {
       }
       const { data: pending } = await admin
         .from("pending_password_confirms")
-        .select("user_id")
+        .select("user_id, password_hash")
         .eq("token", confirm_token)
         .gt("expires_at", new Date().toISOString())
         .maybeSingle();
@@ -426,8 +462,9 @@ Deno.serve(async (req) => {
           status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
       }
+      await admin.from("app_users").update({ password_hash: pending.password_hash }).eq("id", pending.user_id);
       await admin.from("pending_password_confirms").delete().eq("token", confirm_token);
-      return new Response(JSON.stringify({ success: true, message: "Your password change has been confirmed. You can sign in with your new password." }), {
+      return new Response(JSON.stringify({ success: true, message: "Your password has been changed. You can now sign in with your new password." }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }

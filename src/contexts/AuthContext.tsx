@@ -150,10 +150,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   const requestPasswordReset = async (email: string) => {
-    const { data, error } = await supabase.functions.invoke("auth-custom", {
-      body: { action: "request-password-reset", email: email.trim() },
+    const res = await fetch(FUNCTION_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "request-password-reset", email: email.trim() }),
     });
-    if (error) throw new Error(error.message || "Request failed");
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      const message = data?.error ?? (res.status === 429 ? "You can only request a password reset once per day. Please try again later." : "Request failed");
+      throw new Error(message);
+    }
     if (data?.error) throw new Error(data.error);
   };
 

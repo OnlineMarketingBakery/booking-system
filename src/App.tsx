@@ -24,6 +24,7 @@ import SuperAdminDashboard from "./pages/dashboard/SuperAdminDashboard";
 import BookingPage from "./pages/BookingPage";
 import ThankYouPage from "./pages/ThankYouPage";
 import GoogleOAuthRedirect from "./pages/GoogleOAuthRedirect";
+import AcceptStaffInvite from "./pages/AcceptStaffInvite";
 
 const queryClient = new QueryClient();
 
@@ -43,6 +44,7 @@ const App = () => (
             <Route path="/auth/google-callback" element={<GoogleOAuthRedirect />} />
             <Route path="/reset-password" element={<ResetPassword />} />
             <Route path="/confirm-password-change" element={<ConfirmPasswordChange />} />
+            <Route path="/accept-staff-invite" element={<AcceptStaffInvite />} />
             <Route
               path="/dashboard"
               element={

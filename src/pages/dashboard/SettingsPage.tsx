@@ -7,13 +7,24 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Settings, Calendar, ExternalLink, CheckCircle2, XCircle, Pencil, Loader2, Lock } from "lucide-react";
+import { Settings, Calendar, ExternalLink, CheckCircle2, XCircle, Pencil, Loader2, Lock, Mail, Trash2, Users } from "lucide-react";
 import { useSearchParams } from "react-router-dom";
 import { useEffect, useState } from "react";
 import { useToast } from "@/hooks/use-toast";
 import { useSpamProtection } from "@/hooks/useSpamProtection";
 import { SpamProtectionFields } from "@/components/SpamProtectionFields";
 import { useQueryClient } from "@tanstack/react-query";
+import { useMutation } from "@tanstack/react-query";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 
 export default function SettingsPage() {
   const { organization } = useOrganization();
@@ -27,6 +38,7 @@ export default function SettingsPage() {
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [changingPassword, setChangingPassword] = useState(false);
+  const [staffToFire, setStaffToFire] = useState<{ id: string; name: string; email: string | null } | null>(null);
   const { validateSpamProtection, SpamProtectionFieldsProps } = useSpamProtection();
 
   const { data: gcalConnected, refetch } = useQuery({
@@ -40,6 +52,80 @@ export default function SettingsPage() {
       return !!data;
     },
     enabled: !!user,
+  });
+
+  const { data: acceptedInvitees = [], isLoading: loadingInvitees } = useQuery({
+    queryKey: ["staff-invitations-accepted", organization?.id],
+    queryFn: async () => {
+      if (!organization) return [];
+      const { data, error } = await supabase
+        .from("staff_invitations")
+        .select("id, email, accepted_at")
+        .eq("organization_id", organization.id)
+        .eq("status", "accepted")
+        .is("staff_id", null)
+        .order("accepted_at", { ascending: false });
+      if (error) throw error;
+      return data ?? [];
+    },
+    enabled: !!organization,
+  });
+
+  const removeAcceptedInvite = useMutation({
+    mutationFn: async (invitationId: string) => {
+      if (!organization) throw new Error("No organization");
+      const { error } = await supabase
+        .from("staff_invitations")
+        .delete()
+        .eq("id", invitationId)
+        .eq("organization_id", organization.id)
+        .eq("status", "accepted")
+        .is("staff_id", null);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["staff-invitations-accepted"] });
+      toast({ title: "Invitation removed", description: "They will no longer appear in Add Staff. You can send a new invitation from Staff if needed." });
+    },
+    onError: (err: unknown) =>
+      toast({ title: "Error", description: err instanceof Error ? err.message : "Could not remove invitation", variant: "destructive" }),
+  });
+
+  const { data: activeStaff = [], isLoading: loadingStaff } = useQuery({
+    queryKey: ["staff", organization?.id],
+    queryFn: async () => {
+      if (!organization) return [];
+      const { data, error } = await supabase
+        .from("staff")
+        .select("id, name, email")
+        .eq("organization_id", organization.id)
+        .eq("is_active", true)
+        .order("created_at");
+      if (error) throw error;
+      return data ?? [];
+    },
+    enabled: !!organization,
+  });
+
+  const fireStaff = useMutation({
+    mutationFn: async (staffId: string) => {
+      if (!organization) throw new Error("No organization");
+      const { error } = await supabase.from("staff").update({ is_active: false }).eq("id", staffId).eq("organization_id", organization.id);
+      if (error) throw error;
+      await supabase
+        .from("staff_invitations")
+        .update({ staff_id: null, status: "revoked" })
+        .eq("staff_id", staffId);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["staff"] });
+      queryClient.invalidateQueries({ queryKey: ["staff-locations"] });
+      queryClient.invalidateQueries({ queryKey: ["staff-invitations-accepted"] });
+      setStaffToFire(null);
+      toast({ title: "Staff removed", description: "They will no longer appear for new bookings. Existing bookings still show their name. That email cannot be added as staff again." });
+    },
+    onError: (err: unknown) =>
+      toast({ title: "Error", description: err instanceof Error ? err.message : "Could not remove staff", variant: "destructive" }),
   });
 
   useEffect(() => {
@@ -223,6 +309,91 @@ export default function SettingsPage() {
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
+                <Users className="h-5 w-5 text-primary" />
+                Your staff
+              </CardTitle>
+              <CardDescription>
+                Remove a staff member here to fire them. They will no longer appear for new bookings (existing bookings still show their name). That email cannot be used to add staff again.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              {loadingStaff ? (
+                <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                  <Loader2 className="h-4 w-4 animate-spin" /> Loading…
+                </div>
+              ) : activeStaff.length === 0 ? (
+                <p className="text-sm text-muted-foreground">No staff yet. Add staff from the Staff page.</p>
+              ) : (
+                <ul className="space-y-2">
+                  {activeStaff.map((s: { id: string; name: string; email: string | null }) => (
+                    <li
+                      key={s.id}
+                      className="flex items-center justify-between rounded-lg border px-3 py-2 text-sm"
+                    >
+                      <div>
+                        <span className="font-medium">{s.name}</span>
+                        {s.email && <span className="text-muted-foreground ml-2">({s.email})</span>}
+                      </div>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="text-destructive hover:text-destructive hover:bg-destructive/10"
+                        onClick={() => setStaffToFire({ id: s.id, name: s.name, email: s.email })}
+                      >
+                        <Trash2 className="h-3 w-3" /> Remove
+                      </Button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Mail className="h-5 w-5 text-primary" />
+                Staff invitations
+              </CardTitle>
+              <CardDescription>
+                People who accepted your invitation but are not yet added as staff. Remove them here if you no longer want to add them; they will disappear from the Add Staff list.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              {loadingInvitees ? (
+                <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                  <Loader2 className="h-4 w-4 animate-spin" /> Loading…
+                </div>
+              ) : acceptedInvitees.length === 0 ? (
+                <p className="text-sm text-muted-foreground">No accepted invitations. Anyone who accepts an invite will appear here until you add them as staff on the Staff page.</p>
+              ) : (
+                <ul className="space-y-2">
+                  {acceptedInvitees.map((inv: { id: string; email: string; accepted_at: string }) => (
+                    <li
+                      key={inv.id}
+                      className="flex items-center justify-between rounded-lg border px-3 py-2 text-sm"
+                    >
+                      <span>{inv.email}</span>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="text-destructive hover:text-destructive hover:bg-destructive/10"
+                        onClick={() => removeAcceptedInvite.mutate(inv.id)}
+                        disabled={removeAcceptedInvite.isPending && removeAcceptedInvite.variables === inv.id}
+                      >
+                        {(removeAcceptedInvite.isPending && removeAcceptedInvite.variables === inv.id) ? <Loader2 className="h-3 w-3 animate-spin" /> : <Trash2 className="h-3 w-3" />}
+                        Remove
+                      </Button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
                 <Calendar className="h-5 w-5 text-primary" />
                 Google Calendar Integration
               </CardTitle>
@@ -255,6 +426,33 @@ export default function SettingsPage() {
           </Card>
         </>
       )}
+
+      <AlertDialog open={!!staffToFire} onOpenChange={(open) => !open && setStaffToFire(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Remove this staff member?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {staffToFire && (
+                <>
+                  Remove <strong>{staffToFire.name}</strong>
+                  {staffToFire.email && <> ({staffToFire.email})</>} from your staff? They will no longer appear for new bookings. Existing bookings will still show their name. This email cannot be used to add staff again.
+                </>
+              )}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={() => staffToFire && fireStaff.mutate(staffToFire.id)}
+              disabled={fireStaff.isPending}
+            >
+              {fireStaff.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+              Remove
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
