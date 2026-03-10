@@ -46,7 +46,7 @@ export default function Overview() {
           .select("*, services(name, price, currency), staff(name)")
           .eq("organization_id", organization.id)
           .order("start_time", { ascending: false }),
-        supabase.from("staff").select("id, name", { count: "exact" }).eq("organization_id", organization.id),
+        supabase.from("staff").select("id, name", { count: "exact" }).eq("organization_id", organization.id).eq("is_active", true),
         supabase.from("services").select("id", { count: "exact" }).eq("organization_id", organization.id),
       ]);
 
