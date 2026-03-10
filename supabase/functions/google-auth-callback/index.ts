@@ -19,6 +19,7 @@ Deno.serve(async (req) => {
   const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
   // When set, Google will show your domain ("Continue to yourdomain.com") instead of the Supabase project ID.
   // You must add this exact URL in Google Cloud OAuth client and host a redirect page there that forwards to the Supabase function.
+  // If you get Error 400: redirect_uri_mismatch, set GOOGLE_OAUTH_REDIRECT_URI in Supabase secrets and redeploy this function.
   const REDIRECT_URI = Deno.env.get("GOOGLE_OAUTH_REDIRECT_URI")?.trim() ||
     `${SUPABASE_URL}/functions/v1/google-auth-callback`;
 

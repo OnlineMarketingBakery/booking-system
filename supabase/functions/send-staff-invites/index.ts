@@ -91,12 +91,17 @@ serve(async (req) => {
         errors.push(`${email}: already accepted (can be added as staff)`);
         continue;
       }
-      if (existing && existing.status === "revoked") {
-        errors.push(`${email}: was removed from staff and cannot be re-invited`);
-        continue;
-      }
-
-      if (existing && existing.status === "expired") {
+      if (existing && (existing.status === "revoked" || existing.status === "rejected")) {
+        // Allow re-inviting: treat like expired — update to pending with new token and send
+        await adminClient.from("staff_invitations").update({
+          status: "pending",
+          token,
+          staff_id: null,
+          invited_at: new Date().toISOString(),
+          accepted_at: null,
+          expires_at: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
+        }).eq("id", existing.id);
+      } else if (existing && existing.status === "expired") {
         await adminClient.from("staff_invitations").update({
           status: "pending",
           token,

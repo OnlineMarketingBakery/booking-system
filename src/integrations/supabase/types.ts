@@ -273,6 +273,7 @@ export type Database = {
       organizations: {
         Row: {
           created_at: string
+          embed_theme: Record<string, unknown> | null
           id: string
           logo_url: string | null
           name: string
@@ -284,6 +285,7 @@ export type Database = {
         }
         Insert: {
           created_at?: string
+          embed_theme?: Record<string, unknown> | null
           id?: string
           logo_url?: string | null
           name: string
@@ -295,6 +297,7 @@ export type Database = {
         }
         Update: {
           created_at?: string
+          embed_theme?: Record<string, unknown> | null
           id?: string
           logo_url?: string | null
           name?: string
@@ -564,18 +567,21 @@ export type Database = {
       organizations_public: {
         Row: {
           id: string | null
+          embed_theme: Record<string, unknown> | null
           logo_url: string | null
           name: string | null
           slug: string | null
         }
         Insert: {
           id?: string | null
+          embed_theme?: Record<string, unknown> | null
           logo_url?: string | null
           name?: string | null
           slug?: string | null
         }
         Update: {
           id?: string | null
+          embed_theme?: Record<string, unknown> | null
           logo_url?: string | null
           name?: string | null
           slug?: string | null

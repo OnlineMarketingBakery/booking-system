@@ -122,7 +122,7 @@ export default function SettingsPage() {
       queryClient.invalidateQueries({ queryKey: ["staff-locations"] });
       queryClient.invalidateQueries({ queryKey: ["staff-invitations-accepted"] });
       setStaffToFire(null);
-      toast({ title: "Staff removed", description: "They will no longer appear for new bookings. Existing bookings still show their name. That email cannot be added as staff again." });
+      toast({ title: "Staff removed", description: "They will no longer appear for new bookings. Existing bookings still show their name. You can re-invite them from the Staff page anytime." });
     },
     onError: (err: unknown) =>
       toast({ title: "Error", description: err instanceof Error ? err.message : "Could not remove staff", variant: "destructive" }),

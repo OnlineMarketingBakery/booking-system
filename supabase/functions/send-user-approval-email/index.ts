@@ -23,7 +23,7 @@ serve(async (req) => {
     if (!email) throw new Error("email is required");
 
     const appUrl = Deno.env.get("APP_URL") || "";
-    const loginUrl = appUrl ? `${appUrl.replace(/\/$/, "")}/auth` : "the login page";
+    const loginUrl = appUrl ? `${appUrl.replace(/\/$/, "")}` : "the login page";
     const name = full_name || "there";
 
     const html = `

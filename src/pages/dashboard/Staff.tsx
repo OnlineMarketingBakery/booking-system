@@ -145,7 +145,7 @@ export default function Staff() {
       // Soft-delete: hide from lists and booking flow; existing bookings still show this staff
       const { error } = await supabase.from("staff").update({ is_active: false }).eq("id", id);
       if (error) throw error;
-      // Revoke their invitation so this email cannot be added as staff again
+      // Mark invitation as revoked so they no longer appear in "Add Staff"; they can be re-invited anytime
       await supabase
         .from("staff_invitations")
         .update({ staff_id: null, status: "revoked" })
