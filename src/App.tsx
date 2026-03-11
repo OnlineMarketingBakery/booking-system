@@ -23,6 +23,7 @@ import Customers from "./pages/dashboard/Customers";
 import SuperAdminDashboard from "./pages/dashboard/SuperAdminDashboard";
 import BookingPage from "./pages/BookingPage";
 import ThankYouPage from "./pages/ThankYouPage";
+import ConfirmBookingPage from "./pages/ConfirmBookingPage";
 import GoogleOAuthRedirect from "./pages/GoogleOAuthRedirect";
 import AcceptStaffInvite from "./pages/AcceptStaffInvite";
 
@@ -40,6 +41,7 @@ const App = () => (
             <Route path="/" element={<Auth />} />
             <Route path="/book/:slug" element={<BookingPage />} />
             <Route path="/book/success" element={<ThankYouPage />} />
+            <Route path="/book/confirm" element={<ConfirmBookingPage />} />
             <Route path="/book/cancel" element={<BookingPage />} />
             <Route path="/auth/google-callback" element={<GoogleOAuthRedirect />} />
             <Route path="/reset-password" element={<ResetPassword />} />

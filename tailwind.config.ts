@@ -14,13 +14,13 @@ export default {
     },
     extend: {
       colors: {
-        border: "hsl(var(--border))",
+        border: "rgba(57 144 240, 0.40)",
         input: "hsl(var(--input))",
-        ring: "hsl(var(--ring))",
+        ring: "#3990F0",
         background: "hsl(var(--background))",
         foreground: "hsl(var(--foreground))",
         primary: {
-          DEFAULT: "hsl(var(--primary))",
+          DEFAULT: "#3990F0",
           foreground: "hsl(var(--primary-foreground))",
         },
         secondary: {
@@ -36,8 +36,8 @@ export default {
           foreground: "hsl(var(--muted-foreground))",
         },
         accent: {
-          DEFAULT: "hsl(var(--accent))",
-          foreground: "hsl(var(--accent-foreground))",
+          DEFAULT: "rgb(57 144 240 / 0.2)",
+          foreground: "rgb(57 144 240 / 1)",
         },
         popover: {
           DEFAULT: "hsl(var(--popover))",

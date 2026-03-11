@@ -210,7 +210,7 @@ export function LocationAvailability({ locationId, locationName }: LocationAvail
 
   // Show the schedule form immediately so user can configure; no full-card loader blocking the UI
   return (
-    <Card>
+    <Card className="border-primary/30">
       <CardHeader className="pb-3">
         <div className="flex items-center justify-between">
           <CardTitle className="flex items-center gap-2 text-base">

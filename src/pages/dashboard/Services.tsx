@@ -56,7 +56,7 @@ export default function Services() {
       if (error) throw error;
       return data ?? [];
     },
-    enabled: !!organization,
+    enabled: !!organization,  
   });
 
   const defaultVatRateId = vatRates.find((r) => r.is_default)?.id ?? (vatRates[0] as { id: string } | undefined)?.id ?? null;
@@ -241,10 +241,6 @@ export default function Services() {
                     onValueChange={(val) => setSelectedVatRateId(val === "none" ? null : val)}
                     className="grid gap-2"
                   >
-                    <div className="flex items-center gap-2">
-                      <RadioGroupItem value="none" id="vat-none" />
-                      <Label htmlFor="vat-none" className="font-normal cursor-pointer">None (No VAT)</Label>
-                    </div>
                     {vatRates.map((rate) => (
                       <div key={rate.id} className="flex items-center gap-2">
                         <RadioGroupItem value={rate.id} id={`vat-${rate.id}`} />
@@ -283,7 +279,7 @@ export default function Services() {
                   <Button variant="ghost" size="icon" onClick={() => openEditDialog(s)} title="Edit service">
                     <Pencil className="h-4 w-4" />
                   </Button>
-                  <Button variant="ghost" size="icon" onClick={() => deleteService.mutate(s.id)} title="Delete service">
+                  <Button className="hover:bg-destructive/10" variant="ghost" size="icon" onClick={() => deleteService.mutate(s.id)} title="Delete service">
                     <Trash2 className="h-4 w-4 text-destructive" />
                   </Button>
                 </div>

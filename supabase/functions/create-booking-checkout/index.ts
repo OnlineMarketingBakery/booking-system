@@ -23,9 +23,10 @@ function validateInput(body: Record<string, unknown>) {
     }
   }
 
-  // staff_id is optional (null/empty when location has no staff)
+  // staff_id is optional (omit, null, or empty string when location has no staff)
   const staffId = body.staff_id;
-  if (staffId != null && staffId !== "") {
+  const hasStaffId = staffId !== undefined && staffId !== null && staffId !== "";
+  if (hasStaffId) {
     if (typeof staffId !== "string" || !UUID_RE.test(staffId)) {
       errors.push("staff_id must be a valid UUID when provided");
     }
@@ -179,7 +180,13 @@ serve(async (req) => {
         .single();
       if (bookingError) {
         console.error('[create-booking-checkout] Booking creation error:', bookingError);
-        throw new Error('Booking creation failed. Please try again.');
+        const dbMessage = bookingError?.message || String(bookingError);
+        const code = (bookingError as { code?: string })?.code;
+        throw new Error(
+          code === '23502'
+            ? 'Booking failed: staff_id is required by the database. Run the migration that makes staff_id nullable (see project migrations).'
+            : `Booking creation failed: ${dbMessage}`
+        );
       }
 
       bookingIds.push(booking.id);

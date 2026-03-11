@@ -27,6 +27,12 @@ verify_jwt = false
 [functions.sync-booking-to-gcal]
 verify_jwt = false
 
+[functions.send-booking-reminders]
+verify_jwt = false
+
+[functions.send-customer-email]
+verify_jwt = true
+
 [functions.fetch-gcal-events]
 verify_jwt = false
 

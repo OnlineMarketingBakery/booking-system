@@ -24,7 +24,42 @@ serve(async (req) => {
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? ""
     );
 
-    const { booking_id, type = "confirmation" } = await req.json();
+    const { booking_id, type = "confirmation", confirm_booking } = await req.json();
+
+    // Type: confirm_booking — email asking customer to confirm their booking (no booking_id)
+    if (type === "confirm_booking") {
+      const { token, customer_email, customer_name, org_name, formatted_date, formatted_time, service_summary, confirm_url } = confirm_booking || {};
+      if (!token || !customer_email || !confirm_url) throw new Error("confirm_booking requires token, customer_email, confirm_url");
+      const subject = `Confirm your booking — ${org_name || "Your Salon"}`;
+      const html = `
+        <div style="font-family: Arial, sans-serif; max-width: 500px; margin: 0 auto; padding: 24px;">
+          <h1 style="color: #7c3aed; margin-bottom: 8px;">Confirm your booking</h1>
+          <p>Hi ${customer_name || "there"},</p>
+          <p>You requested an appointment. Please confirm it by clicking the button below.</p>
+          ${formatted_date && formatted_time ? `<div style="background: #f9fafb; border-radius: 8px; padding: 16px; margin: 16px 0;">
+            <p style="margin: 4px 0;"><strong>📅 Date:</strong> ${formatted_date}</p>
+            <p style="margin: 4px 0;"><strong>🕐 Time:</strong> ${formatted_time}</p>
+            ${service_summary ? `<p style="margin: 4px 0;"><strong>✂️ Services:</strong> ${service_summary}</p>` : ""}
+          </div>` : ""}
+          <p style="margin: 24px 0;">
+            <a href="${confirm_url}" style="display: inline-block; background: #7c3aed; color: white; padding: 12px 24px; text-decoration: none; border-radius: 8px; font-weight: bold;">Confirm booking</a>
+          </p>
+          <p style="color: #6b7280; font-size: 14px;">This link expires in 24 hours. If you didn't request this, you can ignore this email.</p>
+        </div>
+      `;
+      const fromEmail = Deno.env.get("RESEND_FROM_EMAIL") || "noreply@boeking.salonora.eu";
+      await resend.emails.send({
+        from: `${org_name || "Salonora"} <${fromEmail}>`,
+        to: [customer_email],
+        subject,
+        html,
+      });
+      return new Response(
+        JSON.stringify({ success: true }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" }, status: 200 }
+      );
+    }
+
     if (!booking_id) throw new Error("booking_id is required");
 
     // Fetch booking with related data
@@ -76,7 +111,7 @@ serve(async (req) => {
 
     const fromEmail = Deno.env.get("RESEND_FROM_EMAIL") || "noreply@boeking.salonora.eu";
     const emailResult = await resend.emails.send({
-      from: `${org?.name || "GlowBook"} <${fromEmail}>`,
+      from: `${org?.name || "Salonora"} <${fromEmail}>`,
       to: [booking.customer_email],
       subject,
       html,

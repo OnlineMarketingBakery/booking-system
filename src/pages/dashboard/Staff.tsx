@@ -17,13 +17,12 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
 import { useSpamProtection } from "@/hooks/useSpamProtection";
 import { SpamProtectionFields } from "@/components/SpamProtectionFields";
-import { Plus, Users, Trash2, Loader2, ChevronDown, KeyRound, MapPin } from "lucide-react";
+import { Plus, Users, Trash2, Loader2, KeyRound, MapPin, Pencil } from "lucide-react";
 import { StaffLocationAssignment } from "@/components/StaffLocationAssignment";
 
 export default function Staff() {
@@ -31,7 +30,7 @@ export default function Staff() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [open, setOpen] = useState(false);
-  const [expandedStaff, setExpandedStaff] = useState<string | null>(null);
+  const [editingStaff, setEditingStaff] = useState<{ id: string; name: string; phone: string | null } | null>(null);
   const [selectedLocationId, setSelectedLocationId] = useState("");
   const [staffToRemove, setStaffToRemove] = useState<{ id: string; name: string } | null>(null);
   const { validateSpamProtection, SpamProtectionFieldsProps } = useSpamProtection();
@@ -94,16 +93,35 @@ export default function Staff() {
     onError: (err: any) => toast({ title: "Error", description: err.message, variant: "destructive" }),
   });
 
+  const updateStaff = useMutation({
+    mutationFn: async ({ id, name, phone }: { id: string; name: string; phone: string | null }) => {
+      const { error } = await supabase
+        .from("staff")
+        .update({ name: name.trim(), phone: phone?.trim() || null })
+        .eq("id", id);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["staff"] });
+      setEditingStaff(null);
+      toast({ title: "Staff updated" });
+    },
+    onError: (err: any) => toast({ title: "Error", description: err.message, variant: "destructive" }),
+  });
+
   const deleteStaff = useMutation({
     mutationFn: async (id: string) => {
+      const { error: bookingsError } = await supabase.from("bookings").update({ staff_id: null }).eq("staff_id", id);
+      if (bookingsError) throw bookingsError;
       const { error } = await supabase.from("staff").update({ is_active: false }).eq("id", id);
       if (error) throw error;
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["staff"] });
       queryClient.invalidateQueries({ queryKey: ["staff-locations"] });
+      queryClient.invalidateQueries({ queryKey: ["all-bookings"] });
       setStaffToRemove(null);
-      toast({ title: "Staff removed", description: "They won't appear for new bookings; existing bookings still show them." });
+      toast({ title: "Staff removed", description: "They won't appear for new bookings. Their bookings are now unassigned." });
     },
     onError: (err: unknown) =>
       toast({
@@ -124,6 +142,17 @@ export default function Staff() {
       name: (form.get("name") as string).trim(),
       phone: (form.get("phone") as string)?.trim() ?? "",
       ...(selectedLocationId ? { locationId: selectedLocationId } : {}),
+    });
+  };
+
+  const handleEdit = (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    if (!editingStaff) return;
+    const form = new FormData(e.currentTarget);
+    updateStaff.mutate({
+      id: editingStaff.id,
+      name: (form.get("editName") as string).trim(),
+      phone: (form.get("editPhone") as string)?.trim() || null,
     });
   };
 
@@ -208,19 +237,51 @@ export default function Staff() {
         </AlertDialogContent>
       </AlertDialog>
 
+      <Dialog open={!!editingStaff} onOpenChange={(o) => !o && setEditingStaff(null)}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>Edit Staff Member</DialogTitle></DialogHeader>
+          {editingStaff && (
+            <form onSubmit={handleEdit} className="space-y-4">
+              <div className="space-y-2">
+                <Label>Name</Label>
+                <Input
+                  name="editName"
+                  required
+                  placeholder="e.g. Jane Doe"
+                  maxLength={100}
+                  minLength={2}
+                  defaultValue={editingStaff.name}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>Phone (optional)</Label>
+                <Input
+                  name="editPhone"
+                  placeholder="+1 234 567 890"
+                  maxLength={20}
+                  defaultValue={editingStaff.phone ?? ""}
+                />
+              </div>
+              <div className="flex gap-2">
+                <Button type="button" variant="outline" className="flex-1" onClick={() => setEditingStaff(null)}>Cancel</Button>
+                <Button type="submit" className="flex-1" disabled={updateStaff.isPending}>
+                  {updateStaff.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                  Save changes
+                </Button>
+              </div>
+            </form>
+          )}
+        </DialogContent>
+      </Dialog>
+
       {isLoading ? (
         <div className="flex justify-center py-8"><Loader2 className="h-6 w-6 animate-spin text-primary" /></div>
       ) : staff.length === 0 ? (
         <Card><CardContent className="py-8 text-center text-muted-foreground">No staff yet. Add your first team member.</CardContent></Card>
       ) : (
-        <div className="space-y-4">
+        <div className="grid gap-4 grid-cols-1 md:grid-cols-2 lg:grid-cols-3">
           {staff.map((s) => (
-            <Collapsible
-              key={s.id}
-              open={expandedStaff === s.id}
-              onOpenChange={(open) => setExpandedStaff(open ? s.id : null)}
-            >
-              <Card>
+              <Card key={s.id}>
                 <CardHeader className="flex flex-row items-start justify-between pb-2">
                   <div className="flex items-center gap-3">
                     <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary/10">
@@ -240,12 +301,15 @@ export default function Staff() {
                     </div>
                   </div>
                   <div className="flex items-center gap-1">
-                    <CollapsibleTrigger asChild>
-                      <Button variant="ghost" size="icon">
-                        <ChevronDown className={`h-4 w-4 transition-transform ${expandedStaff === s.id ? "rotate-180" : ""}`} />
-                      </Button>
-                    </CollapsibleTrigger>
-                    <Button variant="ghost" size="icon" onClick={() => setStaffToRemove({ id: s.id, name: s.name })}>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      onClick={() => setEditingStaff({ id: s.id, name: s.name, phone: s.phone })}
+                      aria-label="Edit staff"
+                    >
+                      <Pencil className="h-4 w-4 text-muted-foreground" />
+                    </Button>
+                    <Button className="hover:bg-destructive/10" variant="ghost" size="icon" onClick={() => setStaffToRemove({ id: s.id, name: s.name })}>
                       <Trash2 className="h-4 w-4 text-destructive" />
                     </Button>
                   </div>
@@ -254,7 +318,6 @@ export default function Staff() {
                   <StaffLocationAssignment staffId={s.id} />
                 </CardContent>
               </Card>
-            </Collapsible>
           ))}
         </div>
       )}

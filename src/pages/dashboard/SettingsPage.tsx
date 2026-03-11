@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Settings, Calendar, ExternalLink, CheckCircle2, XCircle, Pencil, Loader2, Lock, Users, Trash2, Percent } from "lucide-react";
+import { Settings, Calendar, ExternalLink, CheckCircle2, XCircle, Pencil, Loader2, Lock, Users, Trash2, Percent, Bell } from "lucide-react";
 import { useSearchParams } from "react-router-dom";
 import { useEffect, useState } from "react";
 import { useToast } from "@/hooks/use-toast";
@@ -27,6 +27,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Switch } from "@/components/ui/switch";
 
 export default function SettingsPage() {
   const { organization } = useOrganization();
@@ -198,17 +199,37 @@ export default function SettingsPage() {
   const fireStaff = useMutation({
     mutationFn: async (staffId: string) => {
       if (!organization) throw new Error("No organization");
+      const { error: bookingsError } = await supabase.from("bookings").update({ staff_id: null }).eq("staff_id", staffId).eq("organization_id", organization.id);
+      if (bookingsError) throw bookingsError;
       const { error } = await supabase.from("staff").update({ is_active: false }).eq("id", staffId).eq("organization_id", organization.id);
       if (error) throw error;
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["staff"] });
       queryClient.invalidateQueries({ queryKey: ["staff-locations"] });
+      queryClient.invalidateQueries({ queryKey: ["all-bookings"] });
       setStaffToFire(null);
-      toast({ title: "Staff removed", description: "They will no longer appear for new bookings. Existing bookings still show their name." });
+      toast({ title: "Staff removed", description: "They will no longer appear for new bookings. Their bookings are now unassigned." });
     },
     onError: (err: unknown) =>
       toast({ title: "Error", description: err instanceof Error ? err.message : "Could not remove staff", variant: "destructive" }),
+  });
+
+  const updateReminderSettings = useMutation({
+    mutationFn: async (payload: { reminder_email_day_before: boolean; reminder_email_hour_before: boolean }) => {
+      if (!organization) throw new Error("No organization");
+      const { error } = await supabase
+        .from("organizations")
+        .update(payload)
+        .eq("id", organization.id);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["organization"] });
+      toast({ title: "Reminder settings saved" });
+    },
+    onError: (err: unknown) =>
+      toast({ title: "Error", description: err instanceof Error ? err.message : "Could not save", variant: "destructive" }),
   });
 
   useEffect(() => {
@@ -396,7 +417,7 @@ export default function SettingsPage() {
                 Your staff
               </CardTitle>
               <CardDescription>
-                Remove a staff member here. They will no longer appear for new bookings (existing bookings still show their name).
+                Remove a staff member here. They will no longer appear for new bookings.
               </CardDescription>
             </CardHeader>
             <CardContent>
@@ -465,7 +486,7 @@ export default function SettingsPage() {
                     className="space-y-4"
                   >
                     {vatRates.map((rate, index) => (
-                      <div key={rate.id ?? `new-${index}`} className="rounded-lg border p-4 space-y-3">
+                      <div key={rate.id ?? `new-${index}`} className="rounded-lg border p-4 space-y-3 border-primary/30">
                         <div className="flex gap-2 items-start justify-between">
                           <div className="grid gap-3 flex-1 max-w-md">
                             <div className="space-y-2">
@@ -519,6 +540,48 @@ export default function SettingsPage() {
                   </button>
                 </>
               )}
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Bell className="h-5 w-5 text-primary" />
+                Appointment reminders
+              </CardTitle>
+              <CardDescription>
+                Automatic email reminders for customers. You can also set per-customer preferences on the Customers page.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="flex items-center justify-between rounded-lg border p-4">
+                <div>
+                  <Label className="text-base font-medium">Email reminder: day before appointment</Label>
+                  <p className="text-sm text-muted-foreground">Send an email the day before the booking date.</p>
+                </div>
+                <Switch
+                  checked={(organization as { reminder_email_day_before?: boolean })?.reminder_email_day_before ?? true}
+                  onCheckedChange={(checked) => updateReminderSettings.mutate({
+                    reminder_email_day_before: !!checked,
+                    reminder_email_hour_before: (organization as { reminder_email_hour_before?: boolean })?.reminder_email_hour_before ?? true,
+                  })}
+                  disabled={updateReminderSettings.isPending}
+                />
+              </div>
+              <div className="flex items-center justify-between rounded-lg border p-4">
+                <div>
+                  <Label className="text-base font-medium">Email reminder: 1 hour before</Label>
+                  <p className="text-sm text-muted-foreground">Send an email one hour before the appointment time.</p>
+                </div>
+                <Switch
+                  checked={(organization as { reminder_email_hour_before?: boolean })?.reminder_email_hour_before ?? true}
+                  onCheckedChange={(checked) => updateReminderSettings.mutate({
+                    reminder_email_day_before: (organization as { reminder_email_day_before?: boolean })?.reminder_email_day_before ?? true,
+                    reminder_email_hour_before: !!checked,
+                  })}
+                  disabled={updateReminderSettings.isPending}
+                />
+              </div>
             </CardContent>
           </Card>
 

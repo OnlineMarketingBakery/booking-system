@@ -61,10 +61,9 @@ export function DashboardSidebar() {
   return (
     <Sidebar collapsible="icon">
       <div className="flex h-14 items-center gap-2 border-b border-sidebar-border px-4">
-        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-sidebar-primary text-sidebar-primary-foreground">
-          <Scissors className="h-4 w-4" />
-        </div>
-        {!collapsed && <span className="font-semibold text-sidebar-foreground">GlowBook</span>}
+          <img src="/logo.png" alt="Salonora" className="h-8 w-5.5 object-contain" />
+        
+        {!collapsed && <img src="/salonora.png" alt="Salonora" className="h-5 object-contain" />}
       </div>
 
       <SidebarContent>

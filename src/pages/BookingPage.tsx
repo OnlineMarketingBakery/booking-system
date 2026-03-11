@@ -24,6 +24,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { useToast } from "@/hooks/use-toast";
 import { useSpamProtection } from "@/hooks/useSpamProtection";
 import { SpamProtectionFields } from "@/components/SpamProtectionFields";
+import { PhoneInput } from "@/components/PhoneInput";
 import {
   Scissors,
   Loader2,
@@ -45,7 +46,7 @@ import {
 import { DEFAULT_EMBED_THEME, hexToHsl, hexToHslWithAlpha, hexToRgba, getContrastingTextColors } from "@/types/embedTheme";
 import type { EmbedTheme } from "@/types/embedTheme";
 
-type Step = "location" | "service" | "time" | "details" | "confirmed";
+type Step = "location" | "service" | "time" | "details" | "confirmed" | "confirm_email_sent";
 
 export default function BookingPage() {
   const { slug } = useParams<{ slug: string }>();
@@ -60,7 +61,12 @@ export default function BookingPage() {
   const [selectedDate, setSelectedDate] = useState<string>(
     format(new Date(), "yyyy-MM-dd"),
   );
+  const [customerPhone, setCustomerPhone] = useState("");
+  const [saveMyInfo, setSaveMyInfo] = useState(false);
   const [booking, setBooking] = useState(false);
+  const [customerFirstName, setCustomerFirstName] = useState("");
+  const [customerLastName, setCustomerLastName] = useState("");
+  const [customerEmail, setCustomerEmail] = useState("");
 
   const bookingIdFromUrl = searchParams.get("booking_id");
   const isSuccess = window.location.pathname.includes("/book/success");
@@ -118,6 +124,24 @@ export default function BookingPage() {
     }
   }, [locations]);
 
+  // Pre-fill details from localStorage when entering details step (user had previously checked "Save my information")
+  const BOOKING_STORAGE_KEY = "booking_saved";
+  useEffect(() => {
+    if (step !== "details" || !org?.id) return;
+    try {
+      const raw = localStorage.getItem(`${BOOKING_STORAGE_KEY}_${org.id}`);
+      if (!raw) return;
+      const saved = JSON.parse(raw) as { customerFirstName?: string; customerLastName?: string; customerEmail?: string; customerPhone?: string };
+      if (!saved || typeof saved !== "object") return;
+      setCustomerFirstName((prev) => (prev.trim() ? prev : (saved.customerFirstName ?? "")));
+      setCustomerLastName((prev) => (prev.trim() ? prev : (saved.customerLastName ?? "")));
+      setCustomerEmail((prev) => (prev.trim() ? prev : (saved.customerEmail ?? "")));
+      setCustomerPhone((prev) => (prev.trim() ? prev : (saved.customerPhone ?? "")));
+    } catch {
+      // ignore invalid or missing localStorage
+    }
+  }, [step, org?.id]);
+
   const { data: services = [] } = useQuery({
     queryKey: ["booking-services", org?.id],
     queryFn: async () => {
@@ -131,6 +155,11 @@ export default function BookingPage() {
     },
     enabled: !!org,
   });
+
+  const CURRENCY_SYMBOLS: Record<string, string> = {
+    usd: "$", eur: "€", gbp: "£", cad: "C$", aud: "A$", jpy: "¥", inr: "₹", brl: "R$",
+  };
+  const getCurrencySymbol = (code: string) => CURRENCY_SYMBOLS[code?.toLowerCase()] ?? code?.toUpperCase() ?? "€";
 
   const { data: staffList = [] } = useQuery({
     queryKey: ["booking-staff", selectedLocation],
@@ -166,6 +195,8 @@ export default function BookingPage() {
     (sum, s) => sum + Number(s.price),
     0,
   );
+  const displayCurrency = selectedServiceObjects[0]?.currency ?? "eur";
+  const currencySymbol = getCurrencySymbol(displayCurrency);
 
   // Fetch which days of week the location is open (for calendar disabling)
   const { data: locationAvailDays = [] } = useQuery({
@@ -306,6 +337,11 @@ export default function BookingPage() {
       toast({ title: "Please wait a moment", description: "Then try submitting your booking again.", variant: "destructive" });
       return;
     }
+    const phone = (customerPhone || ((form.get("phone") as string)?.trim() ?? "")).trim();
+    if (!phone) {
+      toast({ title: "Phone required", description: "Please enter your phone number.", variant: "destructive" });
+      return;
+    }
     setBooking(true);
     const [h, m] = selectedTime.split(":").map(Number);
     const startTime = setMinutes(
@@ -315,28 +351,79 @@ export default function BookingPage() {
 
     try {
       const { data, error } = await supabase.functions.invoke(
-        "create-booking-checkout",
+        "request-booking-confirmation",
         {
           body: {
             organization_id: org!.id,
             location_id: selectedLocation,
             ...(selectedStaff ? { staff_id: selectedStaff } : {}),
             service_ids: selectedServices,
-            customer_name: form.get("name") as string,
-            customer_email: form.get("email") as string,
-            customer_phone: form.get("phone") as string,
+            customer_name: `${(customerFirstName || ((form.get("firstName") as string)?.trim() ?? "")).trim()} ${(customerLastName || ((form.get("lastName") as string)?.trim() ?? "")).trim()}`.trim(),
+            customer_email: (customerEmail || ((form.get("email") as string)?.trim() ?? "")).trim() || "",
+            customer_phone: phone,
             start_time: startTime.toISOString(),
+            save_my_info: saveMyInfo,
           },
         },
       );
       if (error) throw error;
 
+      if (data.confirm_sent) {
+        if (saveMyInfo && org?.id) {
+          try {
+            localStorage.setItem(
+              `${BOOKING_STORAGE_KEY}_${org.id}`,
+              JSON.stringify({
+                customerFirstName: (customerFirstName || ((form.get("firstName") as string)?.trim() ?? "")).trim(),
+                customerLastName: (customerLastName || ((form.get("lastName") as string)?.trim() ?? "")).trim(),
+                customerEmail: (customerEmail || ((form.get("email") as string)?.trim() ?? "")).trim(),
+                customerPhone: phone,
+              })
+            );
+          } catch {
+            // ignore
+          }
+        }
+        setStep("confirm_email_sent");
+        return;
+      }
+
       if (data.free) {
+        if (saveMyInfo && org?.id) {
+          try {
+            localStorage.setItem(
+              `${BOOKING_STORAGE_KEY}_${org.id}`,
+              JSON.stringify({
+                customerFirstName: (customerFirstName || ((form.get("firstName") as string)?.trim() ?? "")).trim(),
+                customerLastName: (customerLastName || ((form.get("lastName") as string)?.trim() ?? "")).trim(),
+                customerEmail: (customerEmail || ((form.get("email") as string)?.trim() ?? "")).trim(),
+                customerPhone: phone,
+              })
+            );
+          } catch {
+            // ignore
+          }
+        }
         setStep("confirmed");
         return;
       }
 
       if (data.url) {
+        if (saveMyInfo && org?.id) {
+          try {
+            localStorage.setItem(
+              `${BOOKING_STORAGE_KEY}_${org.id}`,
+              JSON.stringify({
+                customerFirstName: (customerFirstName || ((form.get("firstName") as string)?.trim() ?? "")).trim(),
+                customerLastName: (customerLastName || ((form.get("lastName") as string)?.trim() ?? "")).trim(),
+                customerEmail: (customerEmail || ((form.get("email") as string)?.trim() ?? "")).trim(),
+                customerPhone: phone,
+              })
+            );
+          } catch {
+            // ignore
+          }
+        }
         window.location.href = data.url;
       }
     } catch (err: any) {
@@ -391,6 +478,22 @@ export default function BookingPage() {
             <h2 className="text-2xl font-bold">Booking Confirmed!</h2>
             <p className="text-muted-foreground">
               You'll receive a confirmation email shortly.
+            </p>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
+
+  if (step === "confirm_email_sent") {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-muted/30 px-4">
+        <Card className="w-full max-w-md text-center">
+          <CardContent className="py-12 space-y-4">
+            <Calendar className="mx-auto h-16 w-16 text-primary" />
+            <h2 className="text-2xl font-bold">Check your email</h2>
+            <p className="text-muted-foreground">
+              We've sent you a link to confirm your booking. Click the link in the email to complete your appointment. The link expires in 24 hours.
             </p>
           </CardContent>
         </Card>
@@ -651,7 +754,7 @@ export default function BookingPage() {
                     />
                     <span className="flex-1 font-medium">{s.name}</span>
                     <span className="text-xs text-muted-foreground">
-                      {s.duration_minutes}min • ${Number(s.price).toFixed(2)}
+                      {s.duration_minutes}min • {getCurrencySymbol((s as { currency?: string }).currency ?? "eur")}{Number(s.price).toFixed(2)}
                     </span>
                   </button>
                 ))}
@@ -664,7 +767,7 @@ export default function BookingPage() {
                       min total
                     </span>
                     <span className="font-semibold">
-                      ${totalPrice.toFixed(2)}
+                      {currencySymbol}{totalPrice.toFixed(2)}
                     </span>
                   </div>
                 )}
@@ -672,10 +775,7 @@ export default function BookingPage() {
                 <Button
                   className="w-full"
                   disabled={selectedServices.length === 0}
-                  onClick={() => {
-                    setSelectedStaff(staffList[0]?.id ?? "");
-                    setStep("time");
-                  }}
+                  onClick={() => setStep("time")}
                 >
                   Continue with {selectedServices.length} service
                   {selectedServices.length !== 1 ? "s" : ""}
@@ -784,23 +884,40 @@ export default function BookingPage() {
                 <CardDescription className="flex items-center gap-1">
                   <CreditCard className="h-4 w-4" />
                   {totalPrice > 0
-                    ? `Payment of $${totalPrice.toFixed(2)} required for ${selectedServices.length} service${selectedServices.length > 1 ? "s" : ""}`
+                    ? `Payment of ${currencySymbol}${totalPrice.toFixed(2)} required for ${selectedServices.length} service${selectedServices.length > 1 ? "s" : ""}`
                     : "Free services — no payment needed"}
                 </CardDescription>
               </CardHeader>
               <CardContent>
                 <form onSubmit={handleBook} className="space-y-4">
                   <SpamProtectionFields {...SpamProtectionFieldsProps} />
-                  <div className="space-y-2">
-                    <Label>Name</Label>
-                    <Input
-                    className="!shadow-none !outline-none !ring-0"
-                      name="name"
-                      required
-                      placeholder="Your name"
-                      maxLength={100}
-                      minLength={2}
-                    />
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="space-y-2">
+                      <Label>First name</Label>
+                      <Input
+                        className="!shadow-none !outline-none !ring-0"
+                        name="firstName"
+                        required
+                        placeholder="First name"
+                        maxLength={50}
+                        minLength={1}
+                        value={customerFirstName}
+                        onChange={(e) => setCustomerFirstName(e.target.value)}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Last name</Label>
+                      <Input
+                        className="!shadow-none !outline-none !ring-0"
+                        name="lastName"
+                        required
+                        placeholder="Last name"
+                        maxLength={50}
+                        minLength={1}
+                        value={customerLastName}
+                        onChange={(e) => setCustomerLastName(e.target.value)}
+                      />
+                    </div>
                   </div>
                   <div className="space-y-2">
                     <Label>Email</Label>
@@ -811,18 +928,31 @@ export default function BookingPage() {
                       required
                       placeholder="you@example.com"
                       maxLength={255}
+                      value={customerEmail}
+                      onChange={(e) => setCustomerEmail(e.target.value)}
                     />
                   </div>
                   <div className="space-y-2">
-                    <Label>Phone</Label>
-                    <Input
-                    className="!shadow-none !outline-none !ring-0"
-                      name="phone"
-                      placeholder="+1 234 567 890"
-                      maxLength={20}
-                      pattern="[\+\d\s\-\(\)]*"
-                      title="Enter a valid phone number"
+                    <Label>Phone *</Label>
+                    <input type="hidden" name="phone" value={customerPhone} />
+                    <PhoneInput
+                      value={customerPhone}
+                      onChange={setCustomerPhone}
+                      className="!shadow-none"
+                      placeholder="6 12345678"
                     />
+                  </div>
+
+                  <div className="flex items-center space-x-2">
+                    <Checkbox
+                      id="saveMyInfo"
+                      checked={saveMyInfo}
+                      onCheckedChange={(c) => setSaveMyInfo(!!c)}
+                      className="!shadow-none"
+                    />
+                    <Label htmlFor="saveMyInfo" className="text-sm font-normal cursor-pointer">
+                      Save my information for the next time I make an appointment
+                    </Label>
                   </div>
 
                   {/* Summary */}
@@ -831,16 +961,14 @@ export default function BookingPage() {
                       Booking Summary
                     </p>
                     {selectedServiceObjects.map((s) => (
-                      <div key={s.id} className="flex justify-between text-sm">
-                        <span>
-                          {s.name} ({s.duration_minutes}min)
-                        </span>
-                        <span>${Number(s.price).toFixed(2)}</span>
-                      </div>
-                    ))}
+                        <div key={s.id} className="flex justify-between text-sm">
+                          <span>{s.name} ({s.duration_minutes}min)</span>
+                          <span>{currencySymbol}{Number(s.price).toFixed(2)}</span>
+                        </div>
+                      ))}
                     <div className="flex justify-between text-sm font-semibold border-t pt-1 mt-1">
                       <span>Total ({totalDuration}min)</span>
-                      <span>${totalPrice.toFixed(2)}</span>
+                      <span>{currencySymbol}{totalPrice.toFixed(2)}</span>
                     </div>
                   </div>
 

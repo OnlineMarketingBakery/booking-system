@@ -9,17 +9,17 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Badge } from "@/components/ui/badge";
 import { ChartContainer, ChartTooltip, ChartTooltipContent } from "@/components/ui/chart";
 import { PieChart, Pie, Cell } from "recharts";
-import { CalendarDays, DollarSign, Users, TrendingUp, Loader2, Shield } from "lucide-react";
+import { CalendarDays, DollarSign, Users, TrendingUp, Loader2, Shield, UserPlus, Repeat } from "lucide-react";
 import { OnboardingWizard } from "@/components/OnboardingWizard";
 import { format } from "date-fns";
 
 const COLORS = [
-  "hsl(262, 83%, 58%)",
-  "hsl(152, 69%, 40%)",
-  "hsl(38, 92%, 50%)",
-  "hsl(0, 84%, 60%)",
-  "hsl(200, 70%, 50%)",
-  "hsl(320, 70%, 50%)",
+  "hsl(215, 90%, 80%)",
+  "hsl(212, 80%, 65%)",
+  "hsl(214, 70%, 55%)",
+  "hsl(205, 100%, 47%)",
+  "hsl(210, 60%, 35%)",
+  "hsl(208, 90%, 25%)",
 ];
 
 const STATUS_COLORS: Record<string, string> = {
@@ -89,7 +89,20 @@ export default function Overview() {
         .sort((a, b) => b.value - a.value)
         .slice(0, 6);
 
-      return { totalBookings, upcoming, totalStaff, totalServices, revenueFromCompletedBookings, recentBookings, statusData, staffData, serviceData };
+      // Recurring vs new clients: by unique customer_email
+      const customerCounts = new Map<string, number>();
+      for (const b of bookings) {
+        const email = (b as any).customer_email;
+        if (email) customerCounts.set(email, (customerCounts.get(email) || 0) + 1);
+      }
+      let recurringClients = 0;
+      let newClients = 0;
+      for (const count of customerCounts.values()) {
+        if (count >= 2) recurringClients++;
+        else newClients++;
+      }
+
+      return { totalBookings, upcoming, totalStaff, totalServices, revenueFromCompletedBookings, recentBookings, statusData, staffData, serviceData, recurringClients, newClients };
     },
     enabled: !!organization,
   });
@@ -116,20 +129,22 @@ export default function Overview() {
   }
 
   const cards = [
-    { title: "Revenue Collected", value: `€${(stats?.revenueFromCompletedBookings ?? 0).toFixed(2)}`, icon: DollarSign, color: "text-accent-foreground" },
+    { title: "Revenue Collected", value: `€${(stats?.revenueFromCompletedBookings ?? 0).toFixed(2)}`, icon: DollarSign, color: "text-primary" },
     { title: "Total Bookings", value: stats?.totalBookings ?? 0, icon: CalendarDays, color: "text-primary" },
-    { title: "Upcoming", value: stats?.upcoming ?? 0, icon: TrendingUp, color: "text-accent-foreground" },
+    { title: "Upcoming", value: stats?.upcoming ?? 0, icon: TrendingUp, color: "text-primary" },
     { title: "Staff Members", value: stats?.totalStaff ?? 0, icon: Users, color: "text-primary" },
+    { title: "Recurring clients", value: stats?.recurringClients ?? 0, icon: Repeat, color: "text-primary" },
+    { title: "New clients", value: stats?.newClients ?? 0, icon: UserPlus, color: "text-primary" },
   ];
 
   return (
     <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-bold tracking-tight">{organization.name}</h1>
-        <p className="text-muted-foreground">Dashboard overview</p>
+        <p className="text-muted-foreground">Dashboard</p>
       </div>
 
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-6">
         {cards.map((card) => (
           <Card key={card.title}>
             <CardHeader className="flex flex-row items-center justify-between pb-2">
@@ -216,7 +231,7 @@ export default function Overview() {
                         <TableCell>{b.services?.name}</TableCell>
                         <TableCell>{b.staff?.name}</TableCell>
                         <TableCell>{format(new Date(b.start_time), "MMM d, h:mm a")}</TableCell>
-                        <TableCell><Badge variant="outline" className={STATUS_COLORS[b.status] || ""}>{b.status}</Badge></TableCell>
+                        <TableCell><Badge variant="outline" className={`${STATUS_COLORS[b.status] || ""} capitalize`}>{b.status}</Badge></TableCell>
                       </TableRow>
                     ))
                   )}

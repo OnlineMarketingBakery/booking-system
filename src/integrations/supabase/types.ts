@@ -224,6 +224,61 @@ export type Database = {
           },
         ]
       }
+      booking_reminder_sent: {
+        Row: {
+          id: string
+          booking_id: string
+          reminder_type: string
+          sent_at: string
+        }
+        Insert: {
+          id?: string
+          booking_id: string
+          reminder_type: string
+          sent_at?: string
+        }
+        Update: {
+          id?: string
+          booking_id?: string
+          reminder_type?: string
+          sent_at?: string
+        }
+        Relationships: [
+          { foreignKeyName: "booking_reminder_sent_booking_id_fkey", columns: ["booking_id"], isOneToOne: false, referencedRelation: "bookings", referencedColumns: ["id"] },
+        ]
+      }
+      customer_reminder_preferences: {
+        Row: {
+          id: string
+          organization_id: string
+          customer_email: string
+          email_reminder_day_before: boolean
+          email_reminder_hour_before: boolean
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          organization_id: string
+          customer_email: string
+          email_reminder_day_before?: boolean
+          email_reminder_hour_before?: boolean
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          organization_id?: string
+          customer_email?: string
+          email_reminder_day_before?: boolean
+          email_reminder_hour_before?: boolean
+          created_at?: string
+          updated_at?: string
+        }
+        Relationships: [
+          { foreignKeyName: "customer_reminder_preferences_organization_id_fkey", columns: ["organization_id"], isOneToOne: false, referencedRelation: "organizations", referencedColumns: ["id"] },
+        ]
+      }
       google_calendar_tokens: {
         Row: {
           access_token: string
@@ -313,6 +368,8 @@ export type Database = {
           logo_url: string | null
           name: string
           owner_id: string
+          reminder_email_day_before: boolean
+          reminder_email_hour_before: boolean
           slug: string
           stripe_account_id: string | null
           tier: Database["public"]["Enums"]["org_tier"]
@@ -325,6 +382,8 @@ export type Database = {
           logo_url?: string | null
           name: string
           owner_id: string
+          reminder_email_day_before?: boolean
+          reminder_email_hour_before?: boolean
           slug: string
           stripe_account_id?: string | null
           tier?: Database["public"]["Enums"]["org_tier"]
@@ -337,6 +396,8 @@ export type Database = {
           logo_url?: string | null
           name?: string
           owner_id?: string
+          reminder_email_day_before?: boolean
+          reminder_email_hour_before?: boolean
           slug?: string
           stripe_account_id?: string | null
           tier?: Database["public"]["Enums"]["org_tier"]

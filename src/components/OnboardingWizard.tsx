@@ -29,7 +29,7 @@ export function OnboardingWizard() {
     }
     try {
       await createOrganization.mutateAsync({ name, slug });
-      toast({ title: "Salon created!", description: "Welcome to GlowBook." });
+      toast({ title: "Salon created!", description: "Welcome to Salonora." });
     } catch (err: any) {
       toast({ title: "Error", description: err.message, variant: "destructive" });
     }

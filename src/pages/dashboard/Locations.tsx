@@ -297,17 +297,17 @@ export default function Locations() {
       ) : (
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {locations.map((loc) => (
-            <Card key={loc.id}>
+            <Card className="border-primary/30" key={loc.id}>
               <CardHeader className="flex flex-row items-start justify-between pb-2">
                 <div className="flex items-center gap-2">
                   <MapPin className="h-4 w-4 text-primary" />
                   <CardTitle className="text-base">{loc.name}</CardTitle>
                 </div>
                 <div className="flex items-center gap-1">
-                  <Button variant="ghost" size="icon" onClick={() => openEdit(loc)} title="Edit location & hours">
+                  <Button  variant="ghost" size="icon" onClick={() => openEdit(loc)} title="Edit location & hours">
                     <Pencil className="h-4 w-4 text-muted-foreground" />
                   </Button>
-                  <Button variant="ghost" size="icon" onClick={() => deleteLocation.mutate(loc.id)}>
+                  <Button className="hover:bg-destructive/10" variant="ghost" size="icon" onClick={() => deleteLocation.mutate(loc.id)}>
                     <Trash2 className="h-4 w-4 text-destructive" />
                   </Button>
                 </div>

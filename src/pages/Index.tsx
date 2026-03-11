@@ -18,7 +18,7 @@ export default function Index() {
           <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary text-primary-foreground">
             <Scissors className="h-5 w-5" />
           </div>
-          <span className="text-lg font-bold">GlowBook</span>
+          <span className="text-lg font-bold">Salonora</span>
         </div>
         <div className="flex items-center gap-3">
           <Link to="/auth">

@@ -12,7 +12,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { Calendar } from "@/components/ui/calendar";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Loader2, CalendarDays, Search } from "lucide-react";
-import { format } from "date-fns";
+import { format, startOfDay, isBefore } from "date-fns";
 import { toast } from "@/hooks/use-toast";
 
 const STATUS_COLORS: Record<string, string> = {
@@ -38,13 +38,40 @@ export default function Bookings() {
     queryFn: async () => {
       const { data, error } = await supabase
         .from("bookings")
-        .select("*, services(name, duration_minutes, price, currency), staff(name), locations(name)")
+        .select("*, services(name, duration_minutes, price, currency, vat_rates(name, percentage)), staff(name), locations(name)")
         .eq("organization_id", organization!.id)
         .order("start_time", { ascending: false });
       if (error) throw error;
       return data;
     },
     enabled: !!organization,
+  });
+
+  const { data: staffList = [] } = useQuery({
+    queryKey: ["staff-list", organization?.id],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("staff")
+        .select("id, name")
+        .eq("organization_id", organization!.id)
+        .eq("is_active", true)
+        .order("name");
+      if (error) throw error;
+      return data ?? [];
+    },
+    enabled: !!organization,
+  });
+
+  const assignStaffMutation = useMutation({
+    mutationFn: async ({ id, staff_id }: { id: string; staff_id: string | null }) => {
+      const { error } = await supabase.from("bookings").update({ staff_id }).eq("id", id).eq("organization_id", organization!.id);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["all-bookings"] });
+      toast({ title: "Staff assigned" });
+    },
+    onError: (err: any) => toast({ title: "Error", description: err.message, variant: "destructive" }),
   });
 
   const rescheduleMutation = useMutation({
@@ -80,8 +107,17 @@ export default function Bookings() {
     const [h, m] = newTime.split(":").map(Number);
     start.setHours(h, m, 0, 0);
     const end = new Date(start.getTime() + duration * 60000);
+    if (isBefore(start, new Date())) {
+      toast({ title: "Invalid date or time", description: "Please choose a date and time in the future.", variant: "destructive" });
+      return;
+    }
     rescheduleMutation.mutate({ id: rescheduleBooking.id, start_time: start.toISOString(), end_time: end.toISOString() });
   };
+
+  const todayStart = startOfDay(new Date());
+  const isSelectedDateToday = newDate && startOfDay(newDate).getTime() === todayStart.getTime();
+  const now = new Date();
+  const minTimeToday = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
 
   const filtered = (bookings || []).filter((b) => {
     const matchesSearch =
@@ -128,6 +164,7 @@ export default function Bookings() {
               <TableRow>
                 <TableHead>Customer</TableHead>
                 <TableHead>Service</TableHead>
+                <TableHead>VAT</TableHead>
                 <TableHead>Staff</TableHead>
                 <TableHead>Date & Time</TableHead>
                 <TableHead>Status</TableHead>
@@ -136,31 +173,52 @@ export default function Bookings() {
             </TableHeader>
             <TableBody>
               {filtered.length === 0 ? (
-                <TableRow><TableCell colSpan={6} className="text-center text-muted-foreground py-8">No bookings found</TableCell></TableRow>
+                <TableRow><TableCell colSpan={7} className="text-center text-muted-foreground py-8">No bookings found</TableCell></TableRow>
               ) : (
-                filtered.map((b) => (
+                filtered.map((b) => {
+                  const svc = b.services as { name?: string; duration_minutes?: number; price?: number; currency?: string; vat_rates?: { name?: string; percentage?: number | null } | null; vat_rate?: { name?: string; percentage?: number | null } | null } | null;
+                  const vat = svc?.vat_rates ?? svc?.vat_rate;
+                  const vatLabel = vat != null && vat.percentage != null ? `${vat.percentage}%` : "—";
+                  return (
                   <TableRow key={b.id}>
                     <TableCell>
                       <div className="font-medium">{b.customer_name}</div>
                       <div className="text-xs text-muted-foreground">{b.customer_email}</div>
                     </TableCell>
                     <TableCell>{(b.services as any)?.name}</TableCell>
-                    <TableCell>{(b.staff as any)?.name ?? "Unassigned"}</TableCell>
+                    <TableCell className="text-muted-foreground text-sm">{vatLabel}</TableCell>
+                    <TableCell>
+                      <Select
+                        value={b.staff_id ?? "unassigned"}
+                        onValueChange={(val) => assignStaffMutation.mutate({ id: b.id, staff_id: val === "unassigned" ? null : val })}
+                        disabled={assignStaffMutation.isPending}
+                      >
+                        <SelectTrigger className="h-8 w-[140px]">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="unassigned">Unassigned</SelectItem>
+                          {staffList.map((s) => (
+                            <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </TableCell>
                     <TableCell>
                       <div>{format(new Date(b.start_time), "MMM d, yyyy")}</div>
                       <div className="text-xs text-muted-foreground">{format(new Date(b.start_time), "h:mm a")} – {format(new Date(b.end_time), "h:mm a")}</div>
                     </TableCell>
                     <TableCell>
-                      <Badge variant="outline" className={STATUS_COLORS[b.status] || ""}>{b.status}</Badge>
+                      <Badge variant="outline" className={`${STATUS_COLORS[b.status] || ""} capitalize`}>{b.status}</Badge>
                     </TableCell>
                     <TableCell className="text-right space-x-1">
                       {b.status !== "cancelled" && b.status !== "completed" && (
-                        <>
+                        <div className="flex justify-end items-stretch gap-2 ">
                           <Button size="sm" variant="outline" onClick={() => { setRescheduleBooking(b); setNewDate(new Date(b.start_time)); setNewTime(format(new Date(b.start_time), "HH:mm")); }}>
-                            <CalendarDays className="h-3 w-3 mr-1" /> Reschedule
+                            <CalendarDays className="w-3" /> Reschedule
                           </Button>
                           <Select onValueChange={(val) => statusMutation.mutate({ id: b.id, status: val })}>
-                            <SelectTrigger className="h-8 w-[120px] inline-flex">
+                            <SelectTrigger className="h-[36px] w-[120px] inline-flex">
                               <SelectValue placeholder="Set status" />
                             </SelectTrigger>
                             <SelectContent>
@@ -170,11 +228,12 @@ export default function Bookings() {
                               <SelectItem value="no_show">No Show</SelectItem>
                             </SelectContent>
                           </Select>
-                        </>
+                        </div>
                       )}
                     </TableCell>
                   </TableRow>
-                ))
+                );
+                })
               )}
             </TableBody>
           </Table>
@@ -200,12 +259,24 @@ export default function Bookings() {
                     {newDate ? format(newDate, "PPP") : "Pick a date"}
                   </Button>
                 </PopoverTrigger>
-                <PopoverContent className="w-auto p-0"><Calendar mode="single" selected={newDate} onSelect={setNewDate} /></PopoverContent>
+                <PopoverContent className="w-auto p-0">
+                  <Calendar
+                    mode="single"
+                    selected={newDate}
+                    onSelect={setNewDate}
+                    disabled={(date) => isBefore(startOfDay(date), todayStart)}
+                  />
+                </PopoverContent>
               </Popover>
             </div>
             <div>
               <p className="text-sm font-medium mb-1">New Time</p>
-              <Input type="time" value={newTime} onChange={(e) => setNewTime(e.target.value)} />
+              <Input
+                type="time"
+                value={newTime}
+                onChange={(e) => setNewTime(e.target.value)}
+                min={isSelectedDateToday ? minTimeToday : undefined}
+              />
             </div>
           </div>
           <DialogFooter>

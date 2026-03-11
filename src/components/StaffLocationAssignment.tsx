@@ -5,7 +5,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
-import { MapPin, Plus, X, Loader2 } from "lucide-react";
+import { MapPin, X, Loader2 } from "lucide-react";
 import { useState } from "react";
 
 interface StaffLocationAssignmentProps {
@@ -91,19 +91,24 @@ export function StaffLocationAssignment({ staffId }: StaffLocationAssignmentProp
           ))}
           {unassignedLocations.length > 0 && (
             <div className="flex items-center gap-1">
-              <Select value={selectedLocation} onValueChange={setSelectedLocation}>
-                <SelectTrigger className="h-7 w-32 text-xs"><SelectValue placeholder="Add location..." /></SelectTrigger>
+              <Select
+                value={selectedLocation}
+                onValueChange={(value) => {
+                  setSelectedLocation(value);
+                  if (value) assignLocation.mutate(value);
+                }}
+                disabled={assignLocation.isPending}
+              >
+                <SelectTrigger className="h-7 w-32 text-xs">
+                  <SelectValue placeholder="Add location..." />
+                </SelectTrigger>
                 <SelectContent>
                   {unassignedLocations.map(l => (
                     <SelectItem key={l.id} value={l.id}>{l.name}</SelectItem>
                   ))}
                 </SelectContent>
               </Select>
-              {selectedLocation && (
-                <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => assignLocation.mutate(selectedLocation)}>
-                  <Plus className="h-3.5 w-3.5" />
-                </Button>
-              )}
+              {assignLocation.isPending && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />}
             </div>
           )}
           {staffLocations.length === 0 && unassignedLocations.length === 0 && locations.length === 0 && (
