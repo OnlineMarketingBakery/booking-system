@@ -41,7 +41,7 @@ serve(async (req) => {
     const org = (booking as any).organizations;
     const startTime = new Date(booking.start_time);
     const currencySymbols: Record<string, string> = { usd: "$", eur: "€", gbp: "£", cad: "C$", aud: "A$", jpy: "¥", inr: "₹", brl: "R$" };
-    const symbol = currencySymbols[service?.currency || "usd"] || "$";
+    const symbol = currencySymbols[service?.currency || "eur"] || "€";
 
     const formattedDate = startTime.toLocaleDateString("en-US", { weekday: "long", year: "numeric", month: "long", day: "numeric" });
     const formattedTime = startTime.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });

@@ -116,7 +116,7 @@ export default function Overview() {
   }
 
   const cards = [
-    { title: "Revenue Collected", value: `$${(stats?.revenueFromCompletedBookings ?? 0).toFixed(2)}`, icon: DollarSign, color: "text-accent-foreground" },
+    { title: "Revenue Collected", value: `€${(stats?.revenueFromCompletedBookings ?? 0).toFixed(2)}`, icon: DollarSign, color: "text-accent-foreground" },
     { title: "Total Bookings", value: stats?.totalBookings ?? 0, icon: CalendarDays, color: "text-primary" },
     { title: "Upcoming", value: stats?.upcoming ?? 0, icon: TrendingUp, color: "text-accent-foreground" },
     { title: "Staff Members", value: stats?.totalStaff ?? 0, icon: Users, color: "text-primary" },

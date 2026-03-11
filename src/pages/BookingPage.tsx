@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useParams, useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
@@ -30,7 +30,6 @@ import {
   CheckCircle2,
   Calendar,
   MapPin,
-  User,
   Clock,
   CreditCard,
 } from "lucide-react";
@@ -43,10 +42,10 @@ import {
   setHours,
   setMinutes,
 } from "date-fns";
-import { DEFAULT_EMBED_THEME, hexToHsl, hexToHslWithAlpha, hexToRgba } from "@/types/embedTheme";
+import { DEFAULT_EMBED_THEME, hexToHsl, hexToHslWithAlpha, hexToRgba, getContrastingTextColors } from "@/types/embedTheme";
 import type { EmbedTheme } from "@/types/embedTheme";
 
-type Step = "location" | "service" | "staff" | "time" | "details" | "confirmed";
+type Step = "location" | "service" | "time" | "details" | "confirmed";
 
 export default function BookingPage() {
   const { slug } = useParams<{ slug: string }>();
@@ -66,6 +65,7 @@ export default function BookingPage() {
   const bookingIdFromUrl = searchParams.get("booking_id");
   const isSuccess = window.location.pathname.includes("/book/success");
   const isCancel = window.location.pathname.includes("/book/cancel");
+  const isPreviewMode = !!searchParams.get("preview_theme");
 
   const { data: paymentStatus } = useQuery({
     queryKey: ["verify-payment", bookingIdFromUrl],
@@ -109,6 +109,14 @@ export default function BookingPage() {
     },
     enabled: !!org,
   });
+
+  // When there's only one location, select it and skip the location step
+  useEffect(() => {
+    if (locations.length === 1 && locations[0]?.id) {
+      setSelectedLocation(locations[0].id);
+      setStep("service");
+    }
+  }, [locations]);
 
   const { data: services = [] } = useQuery({
     queryKey: ["booking-services", org?.id],
@@ -159,87 +167,89 @@ export default function BookingPage() {
     0,
   );
 
-  // Fetch which days of week the staff works (for calendar disabling)
-  const { data: staffAvailDays = [] } = useQuery({
-    queryKey: ["booking-staff-avail-days", selectedStaff],
+  // Fetch which days of week the location is open (for calendar disabling)
+  const { data: locationAvailDays = [] } = useQuery({
+    queryKey: ["booking-location-avail-days", selectedLocation],
     queryFn: async () => {
       const { data, error } = await supabase
-        .from("availability")
+        .from("location_availability")
         .select("day_of_week")
-        .eq("staff_id", selectedStaff);
+        .eq("location_id", selectedLocation);
       if (error) throw error;
-      // Return unique days
       return [...new Set(data.map((r) => r.day_of_week))];
     },
-    enabled: !!selectedStaff,
+    enabled: !!selectedLocation,
   });
 
   const { data: timeSlots = [] } = useQuery({
-    queryKey: ["booking-slots", selectedStaff, selectedDate, selectedServices],
+    queryKey: ["booking-slots", selectedLocation, selectedStaff, selectedDate, selectedServices],
     queryFn: async () => {
       const dayOfWeek = new Date(selectedDate + "T00:00:00").getDay();
       const { data: avail } = await supabase
-        .from("availability")
+        .from("location_availability")
         .select("*")
-        .eq("staff_id", selectedStaff)
+        .eq("location_id", selectedLocation)
         .eq("day_of_week", dayOfWeek);
 
       if (!avail || avail.length === 0) return [];
 
       const dayStart = new Date(selectedDate + "T00:00:00").toISOString();
       const dayEnd = new Date(selectedDate + "T23:59:59").toISOString();
-      const { data: existing } = await supabase
-        .from("bookings")
-        .select("start_time, end_time")
-        .eq("staff_id", selectedStaff)
-        .gte("start_time", dayStart)
-        .lte("start_time", dayEnd)
-        .neq("status", "cancelled");
 
-      // Fetch Google Calendar events to block availability
+      // When no staff is selected, no need to check existing bookings or calendar — all location slots are available
+      let existing: { start_time: string; end_time: string }[] = [];
       let gcalEvents: { start: string; end: string }[] = [];
-      try {
-        // Get org owner to check their gcal
-        const { data: staffRow } = await supabase
-          .from("staff_public")
-          .select("organization_id")
-          .eq("id", selectedStaff)
-          .single();
-        if (staffRow) {
-          const { data: orgRow } = await supabase
-            .from("organizations_public")
-            .select("id")
-            .eq("id", staffRow.organization_id!)
+      if (selectedStaff) {
+        const { data: existingData } = await supabase
+          .from("bookings")
+          .select("start_time, end_time")
+          .eq("staff_id", selectedStaff)
+          .gte("start_time", dayStart)
+          .lte("start_time", dayEnd)
+          .neq("status", "cancelled");
+        existing = existingData ?? [];
+        try {
+          const { data: staffRow } = await supabase
+            .from("staff_public")
+            .select("organization_id")
+            .eq("id", selectedStaff)
             .single();
-          if (orgRow) {
-            const { data: gcalData } = await supabase.functions.invoke(
-              "fetch-gcal-events",
-              {
-                body: {
-                  user_id: org!.id, // We pass org id; edge fn uses owner_id
-                  time_min: dayStart,
-                  time_max: dayEnd,
+          if (staffRow) {
+            const { data: orgRow } = await supabase
+              .from("organizations_public")
+              .select("id")
+              .eq("id", staffRow.organization_id!)
+              .single();
+            if (orgRow) {
+              const { data: gcalData } = await supabase.functions.invoke(
+                "fetch-gcal-events",
+                {
+                  body: {
+                    user_id: org!.id,
+                    time_min: dayStart,
+                    time_max: dayEnd,
+                  },
                 },
-              },
-            );
-            if (gcalData?.events) {
-              gcalEvents = gcalData.events.map((e: any) => ({
-                start: e.start,
-                end: e.end,
-              }));
+              );
+              if (gcalData?.events) {
+                gcalEvents = gcalData.events.map((e: any) => ({
+                  start: e.start,
+                  end: e.end,
+                }));
+              }
             }
           }
+        } catch {
+          // Silently ignore gcal fetch errors for public booking
         }
-      } catch {
-        // Silently ignore gcal fetch errors for public booking
       }
 
       const duration = totalDuration || 30;
       const slots: { time: string; available: boolean }[] = [];
 
       for (const a of avail) {
-        const [sh, sm] = a.start_time.split(":").map(Number);
-        const [eh, em] = a.end_time.split(":").map(Number);
+        const [sh, sm] = (a.start_time as string).split(":").map(Number);
+        const [eh, em] = (a.end_time as string).split(":").map(Number);
         let current = setMinutes(
           setHours(new Date(selectedDate + "T00:00:00"), sh),
           sm,
@@ -277,7 +287,7 @@ export default function BookingPage() {
       }
       return slots;
     },
-    enabled: !!selectedStaff && !!selectedDate && selectedServices.length > 0,
+    enabled: !!selectedLocation && !!selectedDate && selectedServices.length > 0,
   });
 
   const toggleService = (serviceId: string) => {
@@ -290,6 +300,7 @@ export default function BookingPage() {
 
   const handleBook = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
+    if (isPreviewMode) return;
     const form = new FormData(e.currentTarget);
     if (!validateSpamProtection(form)) {
       toast({ title: "Please wait a moment", description: "Then try submitting your booking again.", variant: "destructive" });
@@ -309,7 +320,7 @@ export default function BookingPage() {
           body: {
             organization_id: org!.id,
             location_id: selectedLocation,
-            staff_id: selectedStaff,
+            ...(selectedStaff ? { staff_id: selectedStaff } : {}),
             service_ids: selectedServices,
             customer_name: form.get("name") as string,
             customer_email: form.get("email") as string,
@@ -389,64 +400,77 @@ export default function BookingPage() {
 
   const parsedSelectedDate = new Date(selectedDate + "T00:00:00");
 
-  const embedTheme: EmbedTheme = org?.embed_theme && typeof org.embed_theme === "object"
+  // Allow preview theme from URL (used by dashboard Embed page live preview)
+  let themeSource: Record<string, unknown> | null = (org?.embed_theme as Record<string, unknown>) ?? null;
+  const previewThemeParam = searchParams.get("preview_theme");
+  if (previewThemeParam && org) {
+    try {
+      const parsed = JSON.parse(decodeURIComponent(previewThemeParam)) as Record<string, unknown>;
+      if (parsed && typeof parsed === "object") themeSource = parsed;
+    } catch {
+      // ignore invalid preview_theme
+    }
+  }
+
+  const embedTheme: EmbedTheme = themeSource && typeof themeSource === "object"
     ? {
-        primaryColor: (org.embed_theme as Record<string, unknown>).primaryColor as string ?? DEFAULT_EMBED_THEME.primaryColor,
-        primaryColorOpacity: (org.embed_theme as Record<string, unknown>).primaryColorOpacity as number ?? undefined,
-        primaryForegroundColor: (org.embed_theme as Record<string, unknown>).primaryForegroundColor as string ?? DEFAULT_EMBED_THEME.primaryForegroundColor,
-        primaryForegroundColorOpacity: (org.embed_theme as Record<string, unknown>).primaryForegroundColorOpacity as number ?? undefined,
-        backgroundColor: (org.embed_theme as Record<string, unknown>).backgroundColor as string ?? DEFAULT_EMBED_THEME.backgroundColor,
-        backgroundColorOpacity: (org.embed_theme as Record<string, unknown>).backgroundColorOpacity as number ?? undefined,
-        cardBackgroundColor: (org.embed_theme as Record<string, unknown>).cardBackgroundColor as string ?? DEFAULT_EMBED_THEME.cardBackgroundColor,
-        cardBackgroundColorOpacity: (org.embed_theme as Record<string, unknown>).cardBackgroundColorOpacity as number ?? undefined,
-        headingColor: (org.embed_theme as Record<string, unknown>).headingColor as string ?? DEFAULT_EMBED_THEME.headingColor,
-        headingColorOpacity: (org.embed_theme as Record<string, unknown>).headingColorOpacity as number ?? undefined,
-        bodyTextColor: (org.embed_theme as Record<string, unknown>).bodyTextColor as string ?? (org.embed_theme as Record<string, unknown>).textColor as string ?? DEFAULT_EMBED_THEME.bodyTextColor,
-        bodyTextColorOpacity: (org.embed_theme as Record<string, unknown>).bodyTextColorOpacity as number ?? undefined,
-        mutedTextColor: (org.embed_theme as Record<string, unknown>).mutedTextColor as string ?? DEFAULT_EMBED_THEME.mutedTextColor,
-        mutedTextColorOpacity: (org.embed_theme as Record<string, unknown>).mutedTextColorOpacity as number ?? undefined,
-        cardBorderColor: (org.embed_theme as Record<string, unknown>).cardBorderColor as string ?? DEFAULT_EMBED_THEME.cardBorderColor,
-        cardBorderColorOpacity: (org.embed_theme as Record<string, unknown>).cardBorderColorOpacity as number ?? undefined,
-        cardBorderWidth: typeof (org.embed_theme as Record<string, unknown>).cardBorderWidth === "number" ? (org.embed_theme as Record<string, unknown>).cardBorderWidth as number : DEFAULT_EMBED_THEME.cardBorderWidth,
-        buttonBackgroundColor: (org.embed_theme as Record<string, unknown>).buttonBackgroundColor as string ?? DEFAULT_EMBED_THEME.buttonBackgroundColor,
-        buttonTextColor: (org.embed_theme as Record<string, unknown>).buttonTextColor as string ?? DEFAULT_EMBED_THEME.buttonTextColor,
-        buttonBorderColor: (org.embed_theme as Record<string, unknown>).buttonBorderColor as string ?? DEFAULT_EMBED_THEME.buttonBorderColor,
-        buttonHoverBackgroundColor: (org.embed_theme as Record<string, unknown>).buttonHoverBackgroundColor as string ?? DEFAULT_EMBED_THEME.buttonHoverBackgroundColor,
-        buttonHoverTextColor: (org.embed_theme as Record<string, unknown>).buttonHoverTextColor as string ?? DEFAULT_EMBED_THEME.buttonHoverTextColor,
-        buttonActiveBackgroundColor: (org.embed_theme as Record<string, unknown>).buttonActiveBackgroundColor as string ?? DEFAULT_EMBED_THEME.buttonActiveBackgroundColor,
-        buttonActiveTextColor: (org.embed_theme as Record<string, unknown>).buttonActiveTextColor as string ?? DEFAULT_EMBED_THEME.buttonActiveTextColor,
-        buttonFocusRingColor: (org.embed_theme as Record<string, unknown>).buttonFocusRingColor as string ?? DEFAULT_EMBED_THEME.buttonFocusRingColor,
-        inputBackgroundColor: (org.embed_theme as Record<string, unknown>).inputBackgroundColor as string ?? DEFAULT_EMBED_THEME.inputBackgroundColor,
-        inputTextColor: (org.embed_theme as Record<string, unknown>).inputTextColor as string ?? DEFAULT_EMBED_THEME.inputTextColor,
-        inputBorderColor: (org.embed_theme as Record<string, unknown>).inputBorderColor as string ?? DEFAULT_EMBED_THEME.inputBorderColor,
-        inputPlaceholderColor: (org.embed_theme as Record<string, unknown>).inputPlaceholderColor as string ?? DEFAULT_EMBED_THEME.inputPlaceholderColor,
-        summaryBackgroundColor: (org.embed_theme as Record<string, unknown>).summaryBackgroundColor as string ?? DEFAULT_EMBED_THEME.summaryBackgroundColor,
-        summaryTitleColor: (org.embed_theme as Record<string, unknown>).summaryTitleColor as string ?? DEFAULT_EMBED_THEME.summaryTitleColor,
-        summaryTextColor: (org.embed_theme as Record<string, unknown>).summaryTextColor as string ?? DEFAULT_EMBED_THEME.summaryTextColor,
-        summaryBorderColor: (org.embed_theme as Record<string, unknown>).summaryBorderColor as string ?? DEFAULT_EMBED_THEME.summaryBorderColor,
-        summarySeparatorColor: (org.embed_theme as Record<string, unknown>).summarySeparatorColor as string ?? DEFAULT_EMBED_THEME.summarySeparatorColor,
-        stepPillCompletedColor: (org.embed_theme as Record<string, unknown>).stepPillCompletedColor as string ?? DEFAULT_EMBED_THEME.stepPillCompletedColor,
-        stepPillCurrentColor: (org.embed_theme as Record<string, unknown>).stepPillCurrentColor as string ?? DEFAULT_EMBED_THEME.stepPillCurrentColor,
-        stepPillDefaultColor: (org.embed_theme as Record<string, unknown>).stepPillDefaultColor as string ?? DEFAULT_EMBED_THEME.stepPillDefaultColor,
-        customCss: typeof (org.embed_theme as Record<string, unknown>).customCss === "string" ? (org.embed_theme as Record<string, unknown>).customCss as string : "",
-        textColor: (org.embed_theme as Record<string, unknown>).textColor as string ?? DEFAULT_EMBED_THEME.bodyTextColor,
-        headingText: (org.embed_theme as Record<string, unknown>).headingText as string ?? DEFAULT_EMBED_THEME.headingText,
-        subheadingText: (org.embed_theme as Record<string, unknown>).subheadingText as string ?? DEFAULT_EMBED_THEME.subheadingText,
+        primaryColor: (themeSource.primaryColor as string) ?? DEFAULT_EMBED_THEME.primaryColor,
+        primaryColorOpacity: (themeSource.primaryColorOpacity as number) ?? undefined,
+        primaryForegroundColor: (themeSource.primaryForegroundColor as string) ?? DEFAULT_EMBED_THEME.primaryForegroundColor,
+        primaryForegroundColorOpacity: (themeSource.primaryForegroundColorOpacity as number) ?? undefined,
+        backgroundColor: (themeSource.backgroundColor as string) ?? DEFAULT_EMBED_THEME.backgroundColor,
+        backgroundColorOpacity: (themeSource.backgroundColorOpacity as number) ?? undefined,
+        cardBackgroundColor: (themeSource.cardBackgroundColor as string) ?? DEFAULT_EMBED_THEME.cardBackgroundColor,
+        cardBackgroundColorOpacity: (themeSource.cardBackgroundColorOpacity as number) ?? undefined,
+        headingColor: (themeSource.headingColor as string) ?? DEFAULT_EMBED_THEME.headingColor,
+        headingColorOpacity: (themeSource.headingColorOpacity as number) ?? undefined,
+        bodyTextColor: (themeSource.bodyTextColor as string) ?? (themeSource.textColor as string) ?? DEFAULT_EMBED_THEME.bodyTextColor,
+        bodyTextColorOpacity: (themeSource.bodyTextColorOpacity as number) ?? undefined,
+        mutedTextColor: (themeSource.mutedTextColor as string) ?? DEFAULT_EMBED_THEME.mutedTextColor,
+        mutedTextColorOpacity: (themeSource.mutedTextColorOpacity as number) ?? undefined,
+        cardBorderColor: (themeSource.cardBorderColor as string) ?? DEFAULT_EMBED_THEME.cardBorderColor,
+        cardBorderColorOpacity: (themeSource.cardBorderColorOpacity as number) ?? undefined,
+        cardBorderWidth: typeof themeSource.cardBorderWidth === "number" ? themeSource.cardBorderWidth : DEFAULT_EMBED_THEME.cardBorderWidth,
+        buttonBackgroundColor: (themeSource.buttonBackgroundColor as string) ?? DEFAULT_EMBED_THEME.buttonBackgroundColor,
+        buttonTextColor: (themeSource.buttonTextColor as string) ?? DEFAULT_EMBED_THEME.buttonTextColor,
+        buttonBorderColor: (themeSource.buttonBorderColor as string) ?? DEFAULT_EMBED_THEME.buttonBorderColor,
+        buttonHoverBackgroundColor: (themeSource.buttonHoverBackgroundColor as string) ?? DEFAULT_EMBED_THEME.buttonHoverBackgroundColor,
+        buttonHoverTextColor: (themeSource.buttonHoverTextColor as string) ?? DEFAULT_EMBED_THEME.buttonHoverTextColor,
+        buttonActiveBackgroundColor: (themeSource.buttonActiveBackgroundColor as string) ?? DEFAULT_EMBED_THEME.buttonActiveBackgroundColor,
+        buttonActiveTextColor: (themeSource.buttonActiveTextColor as string) ?? DEFAULT_EMBED_THEME.buttonActiveTextColor,
+        buttonFocusRingColor: (themeSource.buttonFocusRingColor as string) ?? DEFAULT_EMBED_THEME.buttonFocusRingColor,
+        inputBackgroundColor: (themeSource.inputBackgroundColor as string) ?? DEFAULT_EMBED_THEME.inputBackgroundColor,
+        inputTextColor: (themeSource.inputTextColor as string) ?? DEFAULT_EMBED_THEME.inputTextColor,
+        inputBorderColor: (themeSource.inputBorderColor as string) ?? DEFAULT_EMBED_THEME.inputBorderColor,
+        inputPlaceholderColor: (themeSource.inputPlaceholderColor as string) ?? DEFAULT_EMBED_THEME.inputPlaceholderColor,
+        summaryBackgroundColor: (themeSource.summaryBackgroundColor as string) ?? DEFAULT_EMBED_THEME.summaryBackgroundColor,
+        summaryTitleColor: (themeSource.summaryTitleColor as string) ?? DEFAULT_EMBED_THEME.summaryTitleColor,
+        summaryTextColor: (themeSource.summaryTextColor as string) ?? DEFAULT_EMBED_THEME.summaryTextColor,
+        summaryBorderColor: (themeSource.summaryBorderColor as string) ?? DEFAULT_EMBED_THEME.summaryBorderColor,
+        summarySeparatorColor: (themeSource.summarySeparatorColor as string) ?? DEFAULT_EMBED_THEME.summarySeparatorColor,
+        stepPillCompletedColor: (themeSource.stepPillCompletedColor as string) ?? DEFAULT_EMBED_THEME.stepPillCompletedColor,
+        stepPillCurrentColor: (themeSource.stepPillCurrentColor as string) ?? DEFAULT_EMBED_THEME.stepPillCurrentColor,
+        stepPillDefaultColor: (themeSource.stepPillDefaultColor as string) ?? DEFAULT_EMBED_THEME.stepPillDefaultColor,
+        customCss: typeof themeSource.customCss === "string" ? themeSource.customCss : "",
+        textColor: (themeSource.textColor as string) ?? DEFAULT_EMBED_THEME.bodyTextColor,
+        headingText: (themeSource.headingText as string) ?? DEFAULT_EMBED_THEME.headingText,
+        subheadingText: (themeSource.subheadingText as string) ?? DEFAULT_EMBED_THEME.subheadingText,
       }
     : { ...DEFAULT_EMBED_THEME };
 
+  const cardBgHex = embedTheme.cardBackgroundColor ?? "#ffffff";
+  const contrastingText = getContrastingTextColors(cardBgHex);
+
   const themeStyle: React.CSSProperties = {
-    backgroundColor: embedTheme.backgroundColorOpacity != null && embedTheme.backgroundColorOpacity < 100
-      ? hexToRgba(embedTheme.backgroundColor!, embedTheme.backgroundColorOpacity)
-      : (embedTheme.backgroundColor ?? undefined),
+    backgroundColor: "transparent",
     ["--primary" as string]: embedTheme.primaryColor ? hexToHslWithAlpha(embedTheme.primaryColor, embedTheme.primaryColorOpacity) : undefined,
     ["--primary-foreground" as string]: embedTheme.primaryForegroundColor ? hexToHslWithAlpha(embedTheme.primaryForegroundColor, embedTheme.primaryForegroundColorOpacity) : undefined,
     ["--card" as string]: embedTheme.cardBackgroundColor && (embedTheme.cardBackgroundColorOpacity == null || embedTheme.cardBackgroundColorOpacity >= 100)
       ? hexToHsl(embedTheme.cardBackgroundColor)
       : undefined,
-    ["--card-foreground" as string]: embedTheme.headingColor ? hexToHslWithAlpha(embedTheme.headingColor, embedTheme.headingColorOpacity) : undefined,
-    ["--foreground" as string]: embedTheme.bodyTextColor ? hexToHslWithAlpha(embedTheme.bodyTextColor, embedTheme.bodyTextColorOpacity) : (embedTheme.textColor ? hexToHsl(embedTheme.textColor) : undefined),
-    ["--muted-foreground" as string]: embedTheme.mutedTextColor ? hexToHslWithAlpha(embedTheme.mutedTextColor, embedTheme.mutedTextColorOpacity) : undefined,
+    ["--card-foreground" as string]: hexToHsl(contrastingText.foreground),
+    ["--foreground" as string]: hexToHsl(contrastingText.foreground),
+    ["--muted-foreground" as string]: hexToHsl(contrastingText.muted),
     ["--embed-button-bg" as string]: embedTheme.buttonBackgroundColor ?? undefined,
     ["--embed-button-fg" as string]: embedTheme.buttonTextColor ?? undefined,
     ["--embed-button-border" as string]: embedTheme.buttonBorderColor ?? undefined,
@@ -460,8 +484,8 @@ export default function BookingPage() {
     ["--embed-input-border" as string]: embedTheme.inputBorderColor ?? undefined,
     ["--embed-input-placeholder" as string]: embedTheme.inputPlaceholderColor ?? undefined,
     ["--embed-summary-bg" as string]: embedTheme.summaryBackgroundColor ?? undefined,
-    ["--embed-summary-title" as string]: embedTheme.summaryTitleColor ?? undefined,
-    ["--embed-summary-fg" as string]: embedTheme.summaryTextColor ?? undefined,
+    ["--embed-summary-title" as string]: contrastingText.muted,
+    ["--embed-summary-fg" as string]: contrastingText.foreground,
     ["--embed-summary-border" as string]: embedTheme.summaryBorderColor ?? undefined,
     ["--embed-summary-separator" as string]: embedTheme.summarySeparatorColor ?? undefined,
   };
@@ -475,6 +499,11 @@ export default function BookingPage() {
   if (embedTheme.cardBorderWidth != null && embedTheme.cardBorderWidth >= 0) {
     cardStyle.borderWidth = `${embedTheme.cardBorderWidth}px`;
   }
+
+  const bookingSteps = locations.length === 1
+    ? (["service", "time", "details"] as const)
+    : (["location", "service", "time", "details"] as const);
+  const stepIndex = (bookingSteps as readonly Step[]).indexOf(step);
 
   return (
     <div
@@ -518,6 +547,10 @@ export default function BookingPage() {
         .embed-booking-summary .border-t {
           border-top-color: var(--embed-summary-separator, #e5e7eb) !important;
         }
+        .embed-booking-widget .embed-booking-calendar tbody button:hover:not(:disabled):not([aria-selected="true"]) {
+          background-color: hsl(var(--primary) / 0.25) !important;
+          color: hsl(var(--primary)) !important;
+        }
       `}</style>
       {embedTheme.customCss?.trim() ? (
         <style dangerouslySetInnerHTML={{ __html: embedTheme.customCss.trim() }} />
@@ -527,7 +560,7 @@ export default function BookingPage() {
           <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-primary text-primary-foreground">
             <Scissors className="h-6 w-6" />
           </div>
-          <h1 className="text-xl font-bold" style={{ color: embedTheme.headingColor ?? undefined }}>{org.name}</h1>
+          <h1 className="text-xl font-bold" style={{ color: contrastingText.foreground }}>{org.name}</h1>
           <p className="text-sm text-muted-foreground">
             {embedTheme.headingText ?? "Book an appointment"}
           </p>
@@ -537,20 +570,17 @@ export default function BookingPage() {
         </div>
 
         <div className="flex items-center justify-center gap-1">
-          {["location", "service", "staff", "time", "details"].map((s, i) => {
-            const stepIndex = ["location", "service", "staff", "time", "details"].indexOf(step);
-            const isCompleted = stepIndex > i;
+          {bookingSteps.map((s, i) => {
             const isCurrent = stepIndex === i;
-            const bgColor = isCurrent
-              ? (embedTheme.stepPillCurrentColor ?? DEFAULT_EMBED_THEME.stepPillCurrentColor)
-              : isCompleted
-                ? (embedTheme.stepPillCompletedColor ?? DEFAULT_EMBED_THEME.stepPillCompletedColor)
-                : (embedTheme.stepPillDefaultColor ?? DEFAULT_EMBED_THEME.stepPillDefaultColor);
+            const primaryHex = embedTheme.primaryColor ?? DEFAULT_EMBED_THEME.primaryColor ?? "#3990F0";
+            const pillStyle: React.CSSProperties = isCurrent
+              ? { backgroundColor: primaryHex }
+              : { backgroundColor: hexToRgba(primaryHex, 35) };
             return (
               <div
                 key={s}
                 className="h-1.5 w-8 rounded-full"
-                style={{ backgroundColor: bgColor }}
+                style={pillStyle}
               />
             );
           })}
@@ -642,56 +672,28 @@ export default function BookingPage() {
                 <Button
                   className="w-full"
                   disabled={selectedServices.length === 0}
-                  onClick={() => setStep("staff")}
+                  onClick={() => {
+                    setSelectedStaff(staffList[0]?.id ?? "");
+                    setStep("time");
+                  }}
                 >
                   Continue with {selectedServices.length} service
                   {selectedServices.length !== 1 ? "s" : ""}
                 </Button>
-                <Button
-                  variant="ghost"
-                  className="w-full embed-outline-btn"
-                  onClick={() => setStep("location")}
-                >
-                  ← Back
-                </Button>
-              </CardContent>
-            </>
-          )}
-
-          {step === "staff" && (
-            <>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <User className="h-5 w-5" />
-                  Select Staff
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-2">
-                {staffList.map((s: any) => (
-                  <Button
-                    key={s.id}
-                    variant={selectedStaff === s.id ? "default" : "outline"}
-                    className={`w-full justify-start ${selectedStaff !== s.id ? "embed-outline-btn" : ""}`}
-                    onClick={() => {
-                      setSelectedStaff(s.id);
-                      setStep("time");
-                    }}
-                  >
-                    {s.name}
-                  </Button>
-                ))}
-                {staffList.length === 0 && (
-                  <p className="text-center text-muted-foreground py-4">
-                    No staff at this location.
+                {/* {staffList.length === 0 && (
+                  <p className="text-center text-sm text-muted-foreground">
+                    No staff assigned to this location yet. You can still book — you’ll pick a date and time next.
                   </p>
+                )} */}
+                {locations.length > 1 && (
+                  <Button
+                    variant="ghost"
+                    className="w-full embed-outline-btn"
+                    onClick={() => setStep("location")}
+                  >
+                    ← Back
+                  </Button>
                 )}
-                <Button
-                  variant="ghost"
-                  className="w-full embed-outline-btn"
-                  onClick={() => setStep("service")}
-                >
-                  ← Back
-                </Button>
               </CardContent>
             </>
           )}
@@ -719,10 +721,10 @@ export default function BookingPage() {
                       }}
                       disabled={(date) =>
                         isBefore(date, new Date(new Date().toDateString())) ||
-                        (staffAvailDays.length > 0 &&
-                          !staffAvailDays.includes(date.getDay()))
+                        (locationAvailDays.length > 0 &&
+                          !locationAvailDays.includes(date.getDay()))
                       }
-                      className="rounded-md border"
+                      className="embed-booking-calendar rounded-md border"
                       classNames={{
                         cell: "h-9 w-9 text-center text-sm p-0 relative [&:has([aria-selected].day-range-end)]:rounded-r-md [&:has([aria-selected].day-outside)]:bg-primary/50 [&:has([aria-selected])]:bg-primary first:[&:has([aria-selected])]:rounded-l-md last:[&:has([aria-selected])]:rounded-r-md focus-within:relative focus-within:z-20",
                         day_selected:
@@ -767,7 +769,7 @@ export default function BookingPage() {
                 <Button
                   variant="ghost"
                   className="w-full embed-outline-btn"
-                  onClick={() => setStep("staff")}
+                  onClick={() => setStep("service")}
                 >
                   ← Back
                 </Button>
@@ -842,11 +844,11 @@ export default function BookingPage() {
                     </div>
                   </div>
 
-                  <Button type="submit" className="w-full" disabled={booking}>
+                  <Button type="submit" className="w-full" disabled={booking || isPreviewMode}>
                     {booking && (
                       <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                     )}
-                    {totalPrice > 0 ? `Book Now` : "Confirm Booking"}
+                    {isPreviewMode ? "Preview only" : totalPrice > 0 ? `Book Now` : "Confirm Booking"}
                     {/* {totalPrice > 0 ? `Pay $${totalPrice.toFixed(2)} & Book` : "Confirm Booking"} */}
                   </Button>
                   <Button

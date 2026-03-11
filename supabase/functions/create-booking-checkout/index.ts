@@ -17,9 +17,17 @@ function validateInput(body: Record<string, unknown>) {
   const errors: string[] = [];
 
   // Required UUIDs
-  for (const field of ["organization_id", "location_id", "staff_id"]) {
+  for (const field of ["organization_id", "location_id"]) {
     if (typeof body[field] !== "string" || !UUID_RE.test(body[field] as string)) {
       errors.push(`${field} must be a valid UUID`);
+    }
+  }
+
+  // staff_id is optional (null/empty when location has no staff)
+  const staffId = body.staff_id;
+  if (staffId != null && staffId !== "") {
+    if (typeof staffId !== "string" || !UUID_RE.test(staffId)) {
+      errors.push("staff_id must be a valid UUID when provided");
     }
   }
 
@@ -100,12 +108,14 @@ serve(async (req) => {
     const {
       organization_id,
       location_id,
-      staff_id,
+      staff_id: staffIdParam,
       customer_name,
       customer_email,
       customer_phone,
       start_time,
     } = body;
+
+    const staff_id = (staffIdParam && typeof staffIdParam === "string" && UUID_RE.test(staffIdParam)) ? staffIdParam : null;
 
     // Fetch all services and verify they exist and are active
     const { data: servicesData, error: servicesError } = await supabaseClient
@@ -132,13 +142,16 @@ serve(async (req) => {
       .single();
     if (locError || !loc) throw new Error("Location not found or inactive");
 
-    const { data: staffMember, error: staffError } = await supabaseClient
-      .from("staff")
-      .select("id")
-      .eq("id", staff_id)
-      .eq("is_active", true)
-      .single();
-    if (staffError || !staffMember) throw new Error("Staff member not found or inactive");
+    // When staff_id is provided, verify the staff member exists and is active
+    if (staff_id) {
+      const { data: staffMember, error: staffError } = await supabaseClient
+        .from("staff")
+        .select("id")
+        .eq("id", staff_id)
+        .eq("is_active", true)
+        .single();
+      if (staffError || !staffMember) throw new Error("Staff member not found or inactive");
+    }
 
     // Create bookings sequentially (back-to-back)
     const bookingIds: string[] = [];
@@ -153,7 +166,7 @@ serve(async (req) => {
         .insert({
           organization_id,
           location_id,
-          staff_id,
+          staff_id: staff_id || null,
           service_id: service.id,
           customer_name: customer_name.trim(),
           customer_email: customer_email.trim().toLowerCase(),
@@ -178,7 +191,7 @@ serve(async (req) => {
       0
     );
 
-    const currency = (servicesData[0] as any).currency || "usd";
+    const currency = (servicesData[0] as any).currency || "eur";
 
     // Free path: zero price, or Stripe not configured — confirm booking and return success
     if (totalPriceCents <= 0 || !stripe) {

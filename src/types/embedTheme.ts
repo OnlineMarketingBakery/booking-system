@@ -48,7 +48,7 @@ export type EmbedTheme = {
 };
 
 export const DEFAULT_EMBED_THEME: EmbedTheme = {
-  primaryColor: "#7c3aed",
+  primaryColor: "#3990F0",
   primaryForegroundColor: "#ffffff",
   backgroundColor: "#f5f5f5",
   cardBackgroundColor: "#ffffff",
@@ -64,7 +64,7 @@ export const DEFAULT_EMBED_THEME: EmbedTheme = {
   buttonHoverTextColor: "#111827",
   buttonActiveBackgroundColor: "#e5e7eb",
   buttonActiveTextColor: "#111827",
-  buttonFocusRingColor: "#7c3aed",
+  buttonFocusRingColor: "#3990F0",
   inputBackgroundColor: "#ffffff",
   inputTextColor: "#1f2937",
   inputBorderColor: "#e5e7eb",
@@ -74,13 +74,88 @@ export const DEFAULT_EMBED_THEME: EmbedTheme = {
   summaryTextColor: "#1f2937",
   summaryBorderColor: "#e5e7eb",
   summarySeparatorColor: "#e5e7eb",
-  stepPillCompletedColor: "#7c3aed",
+  stepPillCompletedColor: "#3990F0",
   stepPillCurrentColor: "#ffffff",
   stepPillDefaultColor: "#e5e7eb",
   textColor: "#1f2937",
   headingText: "Book an appointment",
   subheadingText: "Choose your service and time",
 };
+
+/** Relative luminance (0–1). Used to pick contrasting text on a background. */
+export function getLuminance(hex: string): number {
+  const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+  if (!result) return 0.5;
+  const [r, g, b] = [result[1], result[2], result[3]].map((s) => parseInt(s, 16) / 255);
+  const toLinear = (c: number) => (c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4));
+  return 0.2126 * toLinear(r) + 0.7152 * toLinear(g) + 0.0722 * toLinear(b);
+}
+
+/** Return foreground and muted text hex colors that contrast with the given background. */
+export function getContrastingTextColors(backgroundHex: string): { foreground: string; muted: string } {
+  const hex = backgroundHex.replace(/^#/, "");
+  const six = hex.length === 3
+    ? `${hex[0]}${hex[0]}${hex[1]}${hex[1]}${hex[2]}${hex[2]}`
+    : hex;
+  const luminance = getLuminance(six.length === 6 ? `#${six}` : "#ffffff");
+  const isDark = luminance < 0.4;
+  if (isDark) {
+    return { foreground: "#ffffff", muted: "#a3a3a3" };
+  }
+  return { foreground: "#111827", muted: "#6b7280" };
+}
+
+/** Build a full EmbedTheme from the three base colors: primary, card, and text (derived from card). */
+export function buildFullThemeFromColors(options: {
+  primaryColor: string;
+  primaryColorOpacity?: number;
+  cardBackgroundColor: string;
+  cardBackgroundColorOpacity?: number;
+  headingText?: string;
+  subheadingText?: string;
+  customCss?: string;
+}): EmbedTheme {
+  const { primaryColor, cardBackgroundColor } = options;
+  const primaryOpacity = options.primaryColorOpacity ?? 100;
+  const cardOpacity = options.cardBackgroundColorOpacity ?? 100;
+  const onPrimary = getContrastingTextColors(primaryColor);
+  const onCard = getContrastingTextColors(cardBackgroundColor);
+  return {
+    ...DEFAULT_EMBED_THEME,
+    primaryColor,
+    primaryColorOpacity: primaryOpacity,
+    primaryForegroundColor: onPrimary.foreground,
+    primaryForegroundColorOpacity: 100,
+    cardBackgroundColor,
+    cardBackgroundColorOpacity: cardOpacity,
+    headingText: options.headingText ?? DEFAULT_EMBED_THEME.headingText,
+    subheadingText: options.subheadingText ?? DEFAULT_EMBED_THEME.subheadingText,
+    customCss: options.customCss ?? "",
+    buttonBackgroundColor: cardBackgroundColor,
+    buttonTextColor: onCard.foreground,
+    buttonBorderColor: primaryColor,
+    buttonHoverBackgroundColor: cardBackgroundColor,
+    buttonHoverTextColor: onCard.foreground,
+    buttonActiveBackgroundColor: cardBackgroundColor,
+    buttonActiveTextColor: onCard.foreground,
+    buttonFocusRingColor: primaryColor,
+    inputBackgroundColor: cardBackgroundColor,
+    inputTextColor: onCard.foreground,
+    inputBorderColor: primaryColor,
+    inputPlaceholderColor: onCard.muted,
+    summaryBackgroundColor: cardBackgroundColor,
+    summaryTitleColor: onCard.muted,
+    summaryTextColor: onCard.foreground,
+    summaryBorderColor: primaryColor,
+    summarySeparatorColor: primaryColor,
+    stepPillCompletedColor: primaryColor,
+    stepPillCurrentColor: onPrimary.foreground,
+    stepPillDefaultColor: onCard.muted,
+    cardBorderColor: primaryColor,
+    cardBorderColorOpacity: 100,
+    cardBorderWidth: 1,
+  };
+}
 
 /** Convert hex to HSL string "H S% L%" for CSS variables */
 export function hexToHsl(hex: string): string {

@@ -36,7 +36,7 @@ export default function ThankYouPage() {
   const service = booking?.services as any;
   const staff = booking?.staff as any;
   const location = booking?.locations as any;
-  const currencySymbol = ({ usd: "$", eur: "€", gbp: "£", cad: "C$", aud: "A$", jpy: "¥", inr: "₹", brl: "R$" } as Record<string, string>)[service?.currency || "usd"] || "$";
+  const currencySymbol = ({ usd: "$", eur: "€", gbp: "£", cad: "C$", aud: "A$", jpy: "¥", inr: "₹", brl: "R$" } as Record<string, string>)[service?.currency || "eur"] || "€";
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-muted/30 px-4 py-8">

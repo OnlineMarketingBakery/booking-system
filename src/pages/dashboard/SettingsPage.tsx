@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Settings, Calendar, ExternalLink, CheckCircle2, XCircle, Pencil, Loader2, Lock, Mail, Trash2, Users } from "lucide-react";
+import { Settings, Calendar, ExternalLink, CheckCircle2, XCircle, Pencil, Loader2, Lock, Users, Trash2, Percent } from "lucide-react";
 import { useSearchParams } from "react-router-dom";
 import { useEffect, useState } from "react";
 import { useToast } from "@/hooks/use-toast";
@@ -25,6 +25,8 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
+import { Checkbox } from "@/components/ui/checkbox";
 
 export default function SettingsPage() {
   const { organization } = useOrganization();
@@ -38,8 +40,131 @@ export default function SettingsPage() {
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [changingPassword, setChangingPassword] = useState(false);
-  const [staffToFire, setStaffToFire] = useState<{ id: string; name: string; email: string | null } | null>(null);
+  const [staffToFire, setStaffToFire] = useState<{ id: string; name: string; phone?: string | null } | null>(null);
   const { validateSpamProtection, SpamProtectionFieldsProps } = useSpamProtection();
+
+  type VatRateRow = {
+    id?: string;
+    name: string;
+    percentage: number | null;
+    is_default: boolean;
+    percentage_disabled: boolean;
+    sort_order: number;
+  };
+
+  const { data: vatRatesData = [], isLoading: loadingVatRates } = useQuery({
+    queryKey: ["vat-rates", organization?.id],
+    queryFn: async () => {
+      if (!organization) return [];
+      const { data, error } = await supabase
+        .from("vat_rates")
+        .select("id, name, percentage, is_default, percentage_disabled, sort_order")
+        .eq("organization_id", organization.id)
+        .order("sort_order");
+      if (error) throw error;
+      return data ?? [];
+    },
+    enabled: !!organization,
+  });
+
+  const [vatRates, setVatRates] = useState<VatRateRow[]>([]);
+  const [vatRatesSaved, setVatRatesSaved] = useState(true);
+  useEffect(() => {
+    setVatRates(
+      vatRatesData.map((r) => ({
+        id: r.id,
+        name: r.name,
+        percentage: r.percentage,
+        is_default: r.is_default,
+        percentage_disabled: r.percentage_disabled,
+        sort_order: r.sort_order,
+      }))
+    );
+  }, [vatRatesData]);
+
+  const saveVatRates = useMutation({
+    mutationFn: async (rows: VatRateRow[]) => {
+      if (!organization) throw new Error("No organization");
+      const originalIds = new Set((vatRatesData as { id: string }[]).map((r) => r.id));
+      const currentIds = new Set(rows.filter((r) => r.id).map((r) => r.id!));
+      const toDelete = [...originalIds].filter((id) => !currentIds.has(id));
+      for (const id of toDelete) {
+        const { error } = await supabase.from("vat_rates").delete().eq("id", id).eq("organization_id", organization.id);
+        if (error) throw error;
+      }
+      for (const row of rows) {
+        if (row.id) {
+          const { error } = await supabase
+            .from("vat_rates")
+            .update({
+              name: row.name.trim(),
+              percentage: row.percentage_disabled ? null : row.percentage,
+              is_default: row.is_default,
+              percentage_disabled: row.percentage_disabled,
+              sort_order: row.sort_order,
+            })
+            .eq("id", row.id)
+            .eq("organization_id", organization.id);
+          if (error) throw error;
+        } else {
+          const { error } = await supabase.from("vat_rates").insert({
+            organization_id: organization.id,
+            name: row.name.trim(),
+            percentage: row.percentage_disabled ? null : row.percentage,
+            is_default: row.is_default,
+            percentage_disabled: row.percentage_disabled,
+            sort_order: row.sort_order,
+          });
+          if (error) throw error;
+        }
+      }
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["vat-rates"] });
+      setVatRatesSaved(true);
+      toast({ title: "VAT rates saved", description: "Your VAT rates have been updated." });
+    },
+    onError: (err: unknown) =>
+      toast({ title: "Error", description: err instanceof Error ? err.message : "Could not save VAT rates", variant: "destructive" }),
+  });
+
+  const updateVatRate = (index: number, patch: Partial<VatRateRow>) => {
+    setVatRates((prev) => {
+      const next = prev.map((r, i) => (i === index ? { ...r, ...patch } : r));
+      if (patch.is_default) {
+        return next.map((r, i) => (i === index ? { ...r, is_default: true } : { ...r, is_default: false }));
+      }
+      return next;
+    });
+    setVatRatesSaved(false);
+  };
+
+  const addVatRate = () => {
+    setVatRates((prev) => [
+      ...prev,
+      { name: "", percentage: null, is_default: prev.length === 0, percentage_disabled: false, sort_order: prev.length },
+    ]);
+    setVatRatesSaved(false);
+  };
+
+  const removeVatRate = (index: number) => {
+    setVatRates((prev) => prev.filter((_, i) => i !== index));
+    setVatRatesSaved(false);
+  };
+
+  const handleSaveVatRates = () => {
+    const valid = vatRates.every((r) => r.name.trim().length > 0);
+    if (!valid) {
+      toast({ title: "Name required", description: "Every VAT rate must have a name.", variant: "destructive" });
+      return;
+    }
+    const withPercentage = vatRates.filter((r) => !r.percentage_disabled);
+    if (withPercentage.some((r) => r.percentage === null || r.percentage === undefined)) {
+      toast({ title: "Percentage required", description: "Rates with percentage enabled must have a value.", variant: "destructive" });
+      return;
+    }
+    saveVatRates.mutate(vatRates.map((r, i) => ({ ...r, sort_order: i })));
+  };
 
   const { data: gcalConnected, refetch } = useQuery({
     queryKey: ["gcal-connected-settings", user?.id],
@@ -54,50 +179,13 @@ export default function SettingsPage() {
     enabled: !!user,
   });
 
-  const { data: acceptedInvitees = [], isLoading: loadingInvitees } = useQuery({
-    queryKey: ["staff-invitations-accepted", organization?.id],
-    queryFn: async () => {
-      if (!organization) return [];
-      const { data, error } = await supabase
-        .from("staff_invitations")
-        .select("id, email, accepted_at")
-        .eq("organization_id", organization.id)
-        .eq("status", "accepted")
-        .is("staff_id", null)
-        .order("accepted_at", { ascending: false });
-      if (error) throw error;
-      return data ?? [];
-    },
-    enabled: !!organization,
-  });
-
-  const removeAcceptedInvite = useMutation({
-    mutationFn: async (invitationId: string) => {
-      if (!organization) throw new Error("No organization");
-      const { error } = await supabase
-        .from("staff_invitations")
-        .delete()
-        .eq("id", invitationId)
-        .eq("organization_id", organization.id)
-        .eq("status", "accepted")
-        .is("staff_id", null);
-      if (error) throw error;
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["staff-invitations-accepted"] });
-      toast({ title: "Invitation removed", description: "They will no longer appear in Add Staff. You can send a new invitation from Staff if needed." });
-    },
-    onError: (err: unknown) =>
-      toast({ title: "Error", description: err instanceof Error ? err.message : "Could not remove invitation", variant: "destructive" }),
-  });
-
   const { data: activeStaff = [], isLoading: loadingStaff } = useQuery({
     queryKey: ["staff", organization?.id],
     queryFn: async () => {
       if (!organization) return [];
       const { data, error } = await supabase
         .from("staff")
-        .select("id, name, email")
+        .select("id, name, phone")
         .eq("organization_id", organization.id)
         .eq("is_active", true)
         .order("created_at");
@@ -112,17 +200,12 @@ export default function SettingsPage() {
       if (!organization) throw new Error("No organization");
       const { error } = await supabase.from("staff").update({ is_active: false }).eq("id", staffId).eq("organization_id", organization.id);
       if (error) throw error;
-      await supabase
-        .from("staff_invitations")
-        .update({ staff_id: null, status: "revoked" })
-        .eq("staff_id", staffId);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["staff"] });
       queryClient.invalidateQueries({ queryKey: ["staff-locations"] });
-      queryClient.invalidateQueries({ queryKey: ["staff-invitations-accepted"] });
       setStaffToFire(null);
-      toast({ title: "Staff removed", description: "They will no longer appear for new bookings. Existing bookings still show their name. You can re-invite them from the Staff page anytime." });
+      toast({ title: "Staff removed", description: "They will no longer appear for new bookings. Existing bookings still show their name." });
     },
     onError: (err: unknown) =>
       toast({ title: "Error", description: err instanceof Error ? err.message : "Could not remove staff", variant: "destructive" }),
@@ -313,7 +396,7 @@ export default function SettingsPage() {
                 Your staff
               </CardTitle>
               <CardDescription>
-                Remove a staff member here to fire them. They will no longer appear for new bookings (existing bookings still show their name). That email cannot be used to add staff again.
+                Remove a staff member here. They will no longer appear for new bookings (existing bookings still show their name).
               </CardDescription>
             </CardHeader>
             <CardContent>
@@ -325,20 +408,20 @@ export default function SettingsPage() {
                 <p className="text-sm text-muted-foreground">No staff yet. Add staff from the Staff page.</p>
               ) : (
                 <ul className="space-y-2">
-                  {activeStaff.map((s: { id: string; name: string; email: string | null }) => (
+                  {activeStaff.map((s: { id: string; name: string; phone?: string | null }) => (
                     <li
                       key={s.id}
                       className="flex items-center justify-between rounded-lg border px-3 py-2 text-sm"
                     >
                       <div>
                         <span className="font-medium">{s.name}</span>
-                        {s.email && <span className="text-muted-foreground ml-2">({s.email})</span>}
+                        {s.phone && <span className="text-muted-foreground ml-2">({s.phone})</span>}
                       </div>
                       <Button
                         variant="ghost"
                         size="sm"
                         className="text-destructive hover:text-destructive hover:bg-destructive/10"
-                        onClick={() => setStaffToFire({ id: s.id, name: s.name, email: s.email })}
+                        onClick={() => setStaffToFire({ id: s.id, name: s.name, phone: s.phone })}
                       >
                         <Trash2 className="h-3 w-3" /> Remove
                       </Button>
@@ -350,43 +433,91 @@ export default function SettingsPage() {
           </Card>
 
           <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Mail className="h-5 w-5 text-primary" />
-                Staff invitations
-              </CardTitle>
-              <CardDescription>
-                People who accepted your invitation but are not yet added as staff. Remove them here if you no longer want to add them; they will disappear from the Add Staff list.
-              </CardDescription>
+            <CardHeader className="flex flex-row items-center justify-between space-y-0">
+              <div>
+                <CardTitle className="flex items-center gap-2">
+                  <Percent className="h-5 w-5 text-primary" />
+                  VAT rates
+                </CardTitle>
+                <CardDescription>Define VAT rates for your services. When adding a service, you can choose which rate applies.</CardDescription>
+              </div>
+              <Button onClick={handleSaveVatRates} disabled={vatRatesSaved || saveVatRates.isPending}>
+                {saveVatRates.isPending && <Loader2 className="h-4 w-4 animate-spin mr-2" />}
+                Save
+              </Button>
             </CardHeader>
-            <CardContent>
-              {loadingInvitees ? (
+            <CardContent className="space-y-4">
+              {loadingVatRates ? (
                 <div className="flex items-center gap-2 text-sm text-muted-foreground">
                   <Loader2 className="h-4 w-4 animate-spin" /> Loading…
                 </div>
-              ) : acceptedInvitees.length === 0 ? (
-                <p className="text-sm text-muted-foreground">No accepted invitations. Anyone who accepts an invite will appear here until you add them as staff on the Staff page.</p>
               ) : (
-                <ul className="space-y-2">
-                  {acceptedInvitees.map((inv: { id: string; email: string; accepted_at: string }) => (
-                    <li
-                      key={inv.id}
-                      className="flex items-center justify-between rounded-lg border px-3 py-2 text-sm"
-                    >
-                      <span>{inv.email}</span>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="text-destructive hover:text-destructive hover:bg-destructive/10"
-                        onClick={() => removeAcceptedInvite.mutate(inv.id)}
-                        disabled={removeAcceptedInvite.isPending && removeAcceptedInvite.variables === inv.id}
-                      >
-                        {(removeAcceptedInvite.isPending && removeAcceptedInvite.variables === inv.id) ? <Loader2 className="h-3 w-3 animate-spin" /> : <Trash2 className="h-3 w-3" />}
-                        Remove
-                      </Button>
-                    </li>
-                  ))}
-                </ul>
+                <>
+                  <RadioGroup
+                    value={vatRates.findIndex((r) => r.is_default) >= 0 ? String(vatRates.findIndex((r) => r.is_default)) : ""}
+                    onValueChange={(val) => {
+                      const idx = parseInt(val, 10);
+                      if (!Number.isNaN(idx)) {
+                        setVatRates((prev) => prev.map((r, i) => ({ ...r, is_default: i === idx })));
+                        setVatRatesSaved(false);
+                      }
+                    }}
+                    className="space-y-4"
+                  >
+                    {vatRates.map((rate, index) => (
+                      <div key={rate.id ?? `new-${index}`} className="rounded-lg border p-4 space-y-3">
+                        <div className="flex gap-2 items-start justify-between">
+                          <div className="grid gap-3 flex-1 max-w-md">
+                            <div className="space-y-2">
+                              <Label>VAT name *</Label>
+                              <Input
+                                value={rate.name}
+                                onChange={(e) => updateVatRate(index, { name: e.target.value })}
+                                placeholder="e.g. Standard rate"
+                                maxLength={100}
+                              />
+                            </div>
+                            <div className="space-y-2">
+                              <Label>PERCENTAGE</Label>
+                              <Input
+                                type="number"
+                                min={0}
+                                max={100}
+                                step={0.01}
+                                value={rate.percentage_disabled ? "" : (rate.percentage ?? "")}
+                                onChange={(e) => updateVatRate(index, { percentage: e.target.value === "" ? null : parseFloat(e.target.value) })}
+                                placeholder="21"
+                                disabled={rate.percentage_disabled}
+                              />
+                            </div>
+                            <div className="flex flex-wrap items-center gap-4">
+                              <div className="flex items-center gap-2">
+                                <div className="flex items-center gap-2">
+                                  <RadioGroupItem value={String(index)} id={`default-${index}`} />
+                                  <Label htmlFor={`default-${index}`} className="font-normal cursor-pointer">Use as default</Label>
+                                </div>
+                              </div>
+                              <div className="flex items-center gap-2">
+                                <Checkbox
+                                  id={`disable-pct-${index}`}
+                                  checked={rate.percentage_disabled}
+                                  onCheckedChange={(checked) => updateVatRate(index, { percentage_disabled: !!checked, ...(!!checked ? { percentage: null } : {}) })}
+                                />
+                                <Label htmlFor={`disable-pct-${index}`} className="font-normal cursor-pointer">Disable percentage</Label>
+                              </div>
+                            </div>
+                          </div>
+                          <Button variant="ghost" size="icon" className="text-destructive hover:text-destructive hover:bg-destructive/10" onClick={() => removeVatRate(index)}>
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        </div>
+                      </div>
+                    ))}
+                  </RadioGroup>
+                  <button type="button" className="text-primary hover:underline text-sm font-medium" onClick={addVatRate}>
+                    + Add new VAT rate
+                  </button>
+                </>
               )}
             </CardContent>
           </Card>
@@ -435,7 +566,7 @@ export default function SettingsPage() {
               {staffToFire && (
                 <>
                   Remove <strong>{staffToFire.name}</strong>
-                  {staffToFire.email && <> ({staffToFire.email})</>} from your staff? They will no longer appear for new bookings. Existing bookings will still show their name. This email cannot be used to add staff again.
+                  {staffToFire.phone && <> ({staffToFire.phone})</>} from your staff? They will no longer appear for new bookings. Existing bookings will still show their name.
                 </>
               )}
             </AlertDialogDescription>

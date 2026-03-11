@@ -49,7 +49,7 @@ serve(async (req) => {
       .limit(1);
 
     if (!orgs || orgs.length === 0) {
-      return new Response(JSON.stringify({ revenue: 0, currency: "usd", payments: [] }), {
+      return new Response(JSON.stringify({ revenue: 0, currency: "eur", payments: [] }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }

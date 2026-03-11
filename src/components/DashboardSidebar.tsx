@@ -28,7 +28,7 @@ import {
 import { Button } from "@/components/ui/button";
 
 const ownerNavItems = [
-  { title: "Overview", url: "/dashboard", icon: LayoutDashboard },
+  { title: "Dashboard", url: "/dashboard", icon: LayoutDashboard },
   { title: "Bookings", url: "/dashboard/bookings", icon: BookOpen },
   { title: "Locations", url: "/dashboard/locations", icon: MapPin },
   { title: "Staff", url: "/dashboard/staff", icon: Users },
@@ -78,7 +78,7 @@ export function DashboardSidebar() {
                     <NavLink
                       to={item.url}
                       end={item.url === "/dashboard"}
-                      className="flex items-center gap-2 rounded-md px-3 py-2 text-sm text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground transition-colors"
+                      className="flex items-center gap-2 rounded-[4px] px-3 py-2 text-sm text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-primary transition-colors"
                       activeClassName="bg-sidebar-accent text-sidebar-primary font-medium"
                     >
                       <item.icon className="h-4 w-4 shrink-0" />
@@ -92,15 +92,15 @@ export function DashboardSidebar() {
         </SidebarGroup>
       </SidebarContent>
 
-      <SidebarFooter className="border-t border-sidebar-border p-2">
+      <SidebarFooter className="border-t border-sidebar-border  p-2">
         <Button
           variant="ghost"
           size={collapsed ? "icon" : "default"}
-          className="w-full justify-start text-sidebar-foreground hover:bg-sidebar-accent"
+          className="w-full justify-start text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-primary"
           onClick={signOut}
         >
           <LogOut className="h-4 w-4 shrink-0" />
-          {!collapsed && <span className="ml-2">Sign Out</span>}
+          {!collapsed && (<span className="ml-2">Sign Out</span>)}
         </Button>
       </SidebarFooter>
     </Sidebar>

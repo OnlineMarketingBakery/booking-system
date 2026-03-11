@@ -89,6 +89,41 @@ export type Database = {
           },
         ]
       }
+      location_availability: {
+        Row: {
+          id: string
+          location_id: string
+          day_of_week: number
+          start_time: string
+          end_time: string
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          location_id: string
+          day_of_week: number
+          start_time: string
+          end_time: string
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          location_id?: string
+          day_of_week?: number
+          start_time?: string
+          end_time?: string
+          created_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "location_availability_location_id_fkey"
+            columns: ["location_id"]
+            isOneToOne: false
+            referencedRelation: "locations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       bookings: {
         Row: {
           created_at: string
@@ -101,7 +136,7 @@ export type Database = {
           notes: string | null
           organization_id: string
           service_id: string
-          staff_id: string
+          staff_id: string | null
           start_time: string
           status: Database["public"]["Enums"]["booking_status"]
           stripe_payment_intent_id: string | null
@@ -119,7 +154,7 @@ export type Database = {
           notes?: string | null
           organization_id: string
           service_id: string
-          staff_id: string
+          staff_id?: string | null
           start_time: string
           status?: Database["public"]["Enums"]["booking_status"]
           stripe_payment_intent_id?: string | null
@@ -348,6 +383,7 @@ export type Database = {
           organization_id: string
           price: number
           updated_at: string
+          vat_rate_id: string | null
         }
         Insert: {
           created_at?: string
@@ -360,6 +396,7 @@ export type Database = {
           organization_id: string
           price?: number
           updated_at?: string
+          vat_rate_id?: string | null
         }
         Update: {
           created_at?: string
@@ -372,6 +409,7 @@ export type Database = {
           organization_id?: string
           price?: number
           updated_at?: string
+          vat_rate_id?: string | null
         }
         Relationships: [
           {
@@ -386,6 +424,13 @@ export type Database = {
             columns: ["organization_id"]
             isOneToOne: false
             referencedRelation: "organizations_public"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "services_vat_rate_id_fkey"
+            columns: ["vat_rate_id"]
+            isOneToOne: false
+            referencedRelation: "vat_rates"
             referencedColumns: ["id"]
           },
         ]
@@ -561,6 +606,57 @@ export type Database = {
           user_id?: string
         }
         Relationships: []
+      }
+      vat_rates: {
+        Row: {
+          id: string
+          organization_id: string
+          name: string
+          percentage: number | null
+          is_default: boolean
+          percentage_disabled: boolean
+          sort_order: number
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          organization_id: string
+          name: string
+          percentage?: number | null
+          is_default?: boolean
+          percentage_disabled?: boolean
+          sort_order?: number
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          organization_id?: string
+          name?: string
+          percentage?: number | null
+          is_default?: boolean
+          percentage_disabled?: boolean
+          sort_order?: number
+          created_at?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "vat_rates_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "vat_rates_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations_public"
+            referencedColumns: ["id"]
+          },
+        ]
       }
     }
     Views: {

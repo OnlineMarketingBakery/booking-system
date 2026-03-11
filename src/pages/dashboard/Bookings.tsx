@@ -145,7 +145,7 @@ export default function Bookings() {
                       <div className="text-xs text-muted-foreground">{b.customer_email}</div>
                     </TableCell>
                     <TableCell>{(b.services as any)?.name}</TableCell>
-                    <TableCell>{(b.staff as any)?.name}</TableCell>
+                    <TableCell>{(b.staff as any)?.name ?? "Unassigned"}</TableCell>
                     <TableCell>
                       <div>{format(new Date(b.start_time), "MMM d, yyyy")}</div>
                       <div className="text-xs text-muted-foreground">{format(new Date(b.start_time), "h:mm a")} – {format(new Date(b.end_time), "h:mm a")}</div>
