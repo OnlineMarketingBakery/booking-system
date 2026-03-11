@@ -660,9 +660,11 @@ export default function BookingPage() {
       ) : null}
       <div className="w-full max-w-2xl space-y-6">
         <div className="flex flex-col items-center gap-2">
-          <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-primary text-primary-foreground">
-            <Scissors className="h-6 w-6" />
-          </div>
+        <img
+            src="/salonora-logo.png"
+            alt="Salonora"
+            className="max-w-[50%]"
+          />
           <h1 className="text-xl font-bold" style={{ color: contrastingText.foreground }}>{org.name}</h1>
           <p className="text-sm text-muted-foreground">
             {embedTheme.headingText ?? "Book an appointment"}

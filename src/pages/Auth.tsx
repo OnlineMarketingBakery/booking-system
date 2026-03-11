@@ -115,8 +115,13 @@ export default function Auth() {
           {/* <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-primary text-primary-foreground">
             <Scissors className="h-6 w-6" />
           </div> */}
-          <h1 className="text-2xl font-bold tracking-tight">Salonora</h1>
-          <p className="text-sm text-muted-foreground">Salon booking made simple</p>
+          <img
+            src="/salonora-logo.png"
+            alt="Salonora"
+            className=""
+          />
+          {/* <h1 className="text-2xl font-bold tracking-tight">Salonora</h1> */}
+          <p className="text-lg text-muted-foreground text-primary font-bold">Salon booking made simple</p>
         </div>
 
         <Card>
