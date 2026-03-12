@@ -479,6 +479,8 @@ export default function BookingPage() {
             <p className="text-muted-foreground">
               You'll receive a confirmation email shortly.
             </p>
+            <Button onClick={()=>window.location.reload()}>Go Back To Booking Page
+            </Button>
           </CardContent>
         </Card>
       </div>
