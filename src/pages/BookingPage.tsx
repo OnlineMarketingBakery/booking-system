@@ -699,7 +699,7 @@ export default function BookingPage() {
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
                   <MapPin className="h-5 w-5" />
-                  Select Location
+                  Selecteer Locatie
                 </CardTitle>
               </CardHeader>
               <CardContent className="space-y-2">
@@ -723,7 +723,7 @@ export default function BookingPage() {
                 ))}
                 {locations.length === 0 && (
                   <p className="text-center text-muted-foreground py-4">
-                    No locations available
+                    Geen locaties beschikbaar
                   </p>
                 )}
               </CardContent>
@@ -735,9 +735,9 @@ export default function BookingPage() {
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
                   <Scissors className="h-5 w-5" />
-                  Select Services
+                  Selecteer Diensten
                 </CardTitle>
-                <CardDescription>Choose one or more services</CardDescription>
+                <CardDescription>Kies een of meer diensten.</CardDescription>
               </CardHeader>
               <CardContent className="space-y-2">
                 {services.map((s) => (
@@ -766,8 +766,8 @@ export default function BookingPage() {
                 {selectedServices.length > 0 && (
                   <div className="rounded-md bg-muted/50 px-4 py-2 text-sm flex justify-between">
                     <span>
-                      {selectedServices.length} service
-                      {selectedServices.length > 1 ? "s" : ""} • {totalDuration}
+                      {selectedServices.length} dienst
+                      {selectedServices.length > 1 ? "en" : ""} • {totalDuration}
                       min total
                     </span>
                     <span className="font-semibold">
@@ -781,7 +781,7 @@ export default function BookingPage() {
                   disabled={selectedServices.length === 0}
                   onClick={() => setStep("time")}
                 >
-                  Continue with {selectedServices.length} service
+                  Doorgaan met service {selectedServices.length}
                   {selectedServices.length !== 1 ? "s" : ""}
                 </Button>
                 {/* {staffList.length === 0 && (
@@ -795,7 +795,7 @@ export default function BookingPage() {
                     className="w-full embed-outline-btn"
                     onClick={() => setStep("location")}
                   >
-                    ← Back
+                    ← Rug
                   </Button>
                 )}
               </CardContent>
@@ -807,10 +807,10 @@ export default function BookingPage() {
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
                   <Clock className="h-5 w-5" />
-                  Select Date & Time
+                  Selecteer Datum en tijd
                 </CardTitle>
                 <CardDescription>
-                  Total duration: {totalDuration} minutes
+                Totale duur: {totalDuration} minuten
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
@@ -865,7 +865,7 @@ export default function BookingPage() {
                     </div>
                     {timeSlots.filter((t) => t.available).length === 0 && (
                       <p className="text-center text-muted-foreground py-8 text-sm">
-                        No slots available for this date.
+                        Er zijn geen plaatsen meer beschikbaar voor deze datum.
                       </p>
                     )}
                   </div>
@@ -875,7 +875,7 @@ export default function BookingPage() {
                   className="w-full embed-outline-btn"
                   onClick={() => setStep("service")}
                 >
-                  ← Back
+                  ← Rug
                 </Button>
               </CardContent>
             </>
@@ -884,12 +884,12 @@ export default function BookingPage() {
           {step === "details" && (
             <>
               <CardHeader>
-                <CardTitle>Your Details</CardTitle>
+                <CardTitle>Uw gegevens</CardTitle>
                 <CardDescription className="flex items-center gap-1">
                   <CreditCard className="h-4 w-4" />
                   {totalPrice > 0
-                    ? `Payment of ${currencySymbol}${totalPrice.toFixed(2)} required for ${selectedServices.length} service${selectedServices.length > 1 ? "s" : ""}`
-                    : "Free services — no payment needed"}
+                    ? `Betaling van ${currencySymbol}${totalPrice.toFixed(2)} vereist voor ${selectedServices.length} dienst${selectedServices.length > 1 ? "en" : ""}`
+                    : "Gratis diensten — geen betaling vereist"}
                 </CardDescription>
               </CardHeader>
               <CardContent>
@@ -897,12 +897,12 @@ export default function BookingPage() {
                   <SpamProtectionFields {...SpamProtectionFieldsProps} />
                   <div className="grid grid-cols-2 gap-3">
                     <div className="space-y-2">
-                      <Label>First name</Label>
+                      <Label>Voornaam</Label>
                       <Input
                         className="!shadow-none !outline-none !ring-0"
                         name="firstName"
                         required
-                        placeholder="First name"
+                        placeholder="Voornaam"
                         maxLength={50}
                         minLength={1}
                         value={customerFirstName}
@@ -910,12 +910,12 @@ export default function BookingPage() {
                       />
                     </div>
                     <div className="space-y-2">
-                      <Label>Last name</Label>
+                      <Label>Achternaam</Label>
                       <Input
                         className="!shadow-none !outline-none !ring-0"
                         name="lastName"
                         required
-                        placeholder="Last name"
+                        placeholder="Achternaam"
                         maxLength={50}
                         minLength={1}
                         value={customerLastName}
@@ -924,26 +924,26 @@ export default function BookingPage() {
                     </div>
                   </div>
                   <div className="space-y-2">
-                    <Label>Email</Label>
+                    <Label>E-mail</Label>
                     <Input
                     className="!shadow-none !outline-none !ring-0"
                       name="email"
                       type="email"
                       required
-                      placeholder="you@example.com"
+                      placeholder="je@voorbeeld.com"
                       maxLength={255}
                       value={customerEmail}
                       onChange={(e) => setCustomerEmail(e.target.value)}
                     />
                   </div>
                   <div className="space-y-2">
-                    <Label>Phone *</Label>
+                    <Label>Telefoon *</Label>
                     <input type="hidden" name="phone" value={customerPhone} />
                     <PhoneInput
                       value={customerPhone}
                       onChange={setCustomerPhone}
                       className="!shadow-none"
-                      placeholder="6 12345678"
+                      placeholder="06 12345678"
                     />
                   </div>
 
@@ -952,7 +952,7 @@ export default function BookingPage() {
                   {/* Summary */}
                   <div className="embed-booking-summary rounded-md border p-3 space-y-1">
                     <p className="text-xs font-medium text-muted-foreground">
-                      Booking Summary
+                    Boekingsoverzicht
                     </p>
                     {selectedServiceObjects.map((s) => (
                         <div key={s.id} className="flex justify-between text-sm">
@@ -974,7 +974,7 @@ export default function BookingPage() {
                       className="!shadow-none"
                     />
                     <Label htmlFor="saveMyInfo" className="text-sm font-normal cursor-pointer">
-                      Save my information for the next time I make an appointment
+                    Bewaar mijn gegevens voor de volgende keer dat ik een afspraak maak.
                     </Label>
                   </div>
 
@@ -982,7 +982,7 @@ export default function BookingPage() {
                     {booking && (
                       <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                     )}
-                    {isPreviewMode ? "Preview only" : totalPrice > 0 ? `Book Now` : "Confirm Booking"}
+                    {isPreviewMode ? "Alleen voorbeeld" : totalPrice > 0 ? `Boek nu` : "Bevestig boeking"}
                     {/* {totalPrice > 0 ? `Pay $${totalPrice.toFixed(2)} & Book` : "Confirm Booking"} */}
                   </Button>
                   <Button
@@ -991,7 +991,7 @@ export default function BookingPage() {
                     className="w-full embed-outline-btn"
                     onClick={() => setStep("time")}
                   >
-                    ← Back
+                    ← Rug
                   </Button>
                 </form>
               </CardContent>
