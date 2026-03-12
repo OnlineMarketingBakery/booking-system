@@ -1,14 +1,21 @@
-import { useSearchParams, Link } from "react-router-dom";
+import { useEffect } from "react";
+import { useSearchParams, Link, useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { CheckCircle2, Calendar, MapPin, User, Clock, Loader2 } from "lucide-react";
 import { format } from "date-fns";
+import { useOrganization } from "@/hooks/useOrganization";
+
+const REDIRECT_SECONDS = 5;
 
 export default function ThankYouPage() {
   const [searchParams] = useSearchParams();
+  const navigate = useNavigate();
   const bookingId = searchParams.get("booking_id");
+  const { organization } = useOrganization();
+  const homePath = organization?.slug ? `/book/${organization.slug}` : "/";
 
   // Fetch booking details via the verify edge function (uses service role, bypasses RLS)
   const { data, isLoading } = useQuery({
@@ -24,6 +31,14 @@ export default function ThankYouPage() {
   });
 
   const booking = data?.booking;
+
+  useEffect(() => {
+    if (isLoading) return;
+    const timer = setTimeout(() => {
+      navigate(homePath);
+    }, REDIRECT_SECONDS * 1000);
+    return () => clearTimeout(timer);
+  }, [isLoading, navigate, homePath]);
 
   if (isLoading) {
     return (
@@ -47,7 +62,7 @@ export default function ThankYouPage() {
               <CheckCircle2 className="h-10 w-10 text-primary" />
             </div>
             <h1 className="text-2xl font-bold">Thank You!</h1>
-            <p className="text-muted-foreground">Your booking has been confirmed and payment received.</p>
+            <p className="text-muted-foreground">Your booking has been confirmed.</p>
           </div>
 
           {booking && (
@@ -85,7 +100,7 @@ export default function ThankYouPage() {
           )}
 
           <Button asChild variant="outline" className="w-full">
-            <Link to="/">Back to Home</Link>
+            <Link to={homePath}>Back to Home</Link>
           </Button>
         </CardContent>
       </Card>
