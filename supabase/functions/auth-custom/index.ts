@@ -331,16 +331,16 @@ Deno.serve(async (req) => {
           { status: 503, headers: { ...corsHeaders, "Content-Type": "application/json" } }
         );
       }
-      const fromEmail = Deno.env.get("RESEND_FROM_EMAIL") || "noreply@boeking.salonora.eu";
+      const fromEmail = Deno.env.get("RESEND_FROM_EMAIL") || "noreply@booking.salonora.eu";
       const fromName = Deno.env.get("RESEND_FROM_NAME") || "Salonora";
       const appUrl = (Deno.env.get("APP_URL") || "").replace(/\/$/, "");
       const resetUrl = appUrl ? `${appUrl}/reset-password?token=${encodeURIComponent(resetToken)}` : "";
       const html = `
         <div style="font-family: Arial, sans-serif; max-width: 500px; margin: 0 auto; padding: 24px;">
-          <h1 style="color: #7c3aed;">Reset your password</h1>
+          <h1 style="color: #3990f0;">Reset your password</h1>
           <p>We received a request to reset the password for your Salonora account.</p>
           <p>Click the link below to set a new password. This link will expire in 1 hour.</p>
-          ${resetUrl ? `<p><a href="${resetUrl}" style="display: inline-block; background: #7c3aed; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px;">Set new password</a></p>` : ""}
+          ${resetUrl ? `<p><a href="${resetUrl}" style="display: inline-block; background: #3990f0; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px;">Set new password</a></p>` : ""}
           <p style="color: #6b7280; font-size: 14px;">If you didn't request this, you can safely ignore this email.</p>
         </div>
       `;
@@ -411,7 +411,7 @@ Deno.serve(async (req) => {
       }
       const { data: userRow } = await admin.from("app_users").select("email, full_name").eq("id", row.user_id).single();
       const resendKeyConfirm = Deno.env.get("RESEND_API_KEY");
-      const fromEmailConfirm = Deno.env.get("RESEND_FROM_EMAIL") || "noreply@boeking.salonora.eu";
+      const fromEmailConfirm = Deno.env.get("RESEND_FROM_EMAIL") || "noreply@booking.salonora.eu";
       const fromNameConfirm = Deno.env.get("RESEND_FROM_NAME") || "Salonora";
       const appUrlConfirm = (Deno.env.get("APP_URL") || "").replace(/\/$/, "");
       const confirmUrl = appUrlConfirm ? `${appUrlConfirm}/confirm-password-change?token=${encodeURIComponent(confirmToken)}` : "";
@@ -421,10 +421,10 @@ Deno.serve(async (req) => {
           const resendConfirm = new Resend(resendKeyConfirm);
           const htmlConfirm = `
             <div style="font-family: Arial, sans-serif; max-width: 500px; margin: 0 auto; padding: 24px;">
-              <h1 style="color: #7c3aed;">Confirm your password change</h1>
+              <h1 style="color: #3990f0;">Confirm your password change</h1>
               <p>Hi ${userName},</p>
               <p>You requested a new password for your Salonora account. Click the link below to confirm and activate it. Until you confirm, you cannot sign in.</p>
-              ${confirmUrl ? `<p><a href="${confirmUrl}" style="display: inline-block; background: #7c3aed; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px;">Confirm password change</a></p>` : ""}
+              ${confirmUrl ? `<p><a href="${confirmUrl}" style="display: inline-block; background: #3990f0; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px;">Confirm password change</a></p>` : ""}
               <p style="color: #6b7280; font-size: 14px;">If you didn't request this, use "Forgot password" to set a new one.</p>
             </div>
           `;

@@ -69,7 +69,7 @@ serve(async (req) => {
     if (!resendKey) throw new Error("RESEND_API_KEY is not set");
     const resend = new Resend(resendKey);
     const appUrl = (Deno.env.get("APP_URL") || "").replace(/\/$/, "");
-    const fromEmail = Deno.env.get("RESEND_FROM_EMAIL") || "noreply@boeking.salonora.eu";
+    const fromEmail = Deno.env.get("RESEND_FROM_EMAIL") || "noreply@booking.salonora.eu";
 
     const invited: string[] = [];
     const errors: string[] = [];
@@ -128,10 +128,10 @@ serve(async (req) => {
 
       const html = `
         <div style="font-family: Arial, sans-serif; max-width: 500px; margin: 0 auto; padding: 24px;">
-          <h1 style="color: #7c3aed;">You're invited to join ${org.name}</h1>
+          <h1 style="color: #3990f0;">You're invited to join ${org.name}</h1>
           <p>You have been invited to join as staff. Use the link below to accept or reject the invitation.</p>
           <p style="color: #6b7280; font-size: 14px;"><strong>This invitation expires on ${expiresAtStr}.</strong></p>
-          ${appUrl ? `<p><a href="${acceptUrl}" style="display: inline-block; background: #7c3aed; color: white; padding: 12px 24px; text-decoration: none; border-radius: 8px;">Open invitation (accept or reject)</a></p>` : ""}
+          ${appUrl ? `<p><a href="${acceptUrl}" style="display: inline-block; background: #3990f0; color: white; padding: 12px 24px; text-decoration: none; border-radius: 8px;">Open invitation (accept or reject)</a></p>` : ""}
           <p style="color: #6b7280; font-size: 14px;">If you didn't expect this, you can ignore this email.</p>
         </div>
       `;

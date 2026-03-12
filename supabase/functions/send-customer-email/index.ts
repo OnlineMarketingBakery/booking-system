@@ -66,14 +66,14 @@ serve(async (req) => {
     const resendKey = Deno.env.get("RESEND_API_KEY");
     if (!resendKey) throw new Error("RESEND_API_KEY is not set");
     const resend = new Resend(resendKey);
-    const fromEmail = Deno.env.get("RESEND_FROM_EMAIL") || "noreply@boeking.salonora.eu";
+    const fromEmail = Deno.env.get("RESEND_FROM_EMAIL") || "noreply@booking.salonora.eu";
 
     const subj = (subject && String(subject).trim()) || DEFAULT_SUBJECT.replace("us", org.name || "us");
     const msg = (message && String(message).trim()) || DEFAULT_MESSAGE;
     const name = (customer_name && String(customer_name).trim()) || "there";
     const html = `
       <div style="font-family: Arial, sans-serif; max-width: 500px; margin: 0 auto; padding: 24px;">
-        <h1 style="color: #7c3aed; margin-bottom: 8px;">${subj}</h1>
+        <h1 style="color: #3990f0; margin-bottom: 8px;">${subj}</h1>
         <p>Hi ${name},</p>
         <div style="background: #f9fafb; border-radius: 8px; padding: 16px; margin: 16px 0; white-space: pre-wrap;">${msg.replace(/\n/g, "<br>")}</div>
         <p style="color: #6b7280; font-size: 14px;">Best regards,<br>${org.name || "The team"}</p>

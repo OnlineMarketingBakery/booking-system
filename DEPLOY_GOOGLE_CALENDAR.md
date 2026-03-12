@@ -45,17 +45,17 @@ npx supabase functions deploy sync-booking-to-gcal
 
 ## 4. (Optional) Show your domain instead of Supabase project ID on Google
 
-When users connect Google Calendar, Google shows "Continue to [redirect URI domain]". By default that is your Supabase project URL. To show **your app’s domain** (e.g. "Continue to boeking.salonora.eu"):
+When users connect Google Calendar, Google shows "Continue to [redirect URI domain]". By default that is your Supabase project URL. To show **your app’s domain** (e.g. "Continue to booking.salonora.eu"):
 
-1. **Deploy your app** to your domain (e.g. `https://boeking.salonora.eu`). The app includes the route `/auth/google-callback`, which forwards to the Supabase function.
+1. **Deploy your app** to your domain (e.g. `https://booking.salonora.eu`). The app includes the route `/auth/google-callback`, which forwards to the Supabase function.
 
 2. **In Google Cloud** (Booking System project) → **APIs & Services** → **Credentials** → your OAuth client → **Authorized redirect URIs**, add:
-   - `https://boeking.salonora.eu/auth/google-callback`  
+   - `https://booking.salonora.eu/auth/google-callback`  
    (use your real app URL.)
 
 3. **In Supabase**, set the same URL so the Edge Function uses it when sending users to Google:
    ```bash
-   npx supabase secrets set GOOGLE_OAUTH_REDIRECT_URI="https://boeking.salonora.eu/auth/google-callback"
+   npx supabase secrets set GOOGLE_OAUTH_REDIRECT_URI="https://booking.salonora.eu/auth/google-callback"
    ```
 
 4. **Redeploy the callback function:**

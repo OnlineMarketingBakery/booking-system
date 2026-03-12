@@ -31,7 +31,7 @@ serve(async (req) => {
     }
 
     const resend = new Resend(resendKey);
-    const fromEmail = Deno.env.get("RESEND_FROM_EMAIL") || "noreply@boeking.salonora.eu";
+    const fromEmail = Deno.env.get("RESEND_FROM_EMAIL") || "noreply@booking.salonora.eu";
     const fromName = Deno.env.get("RESEND_FROM_NAME") || "Salonora";
     const { email, full_name, user_id } = await req.json();
     if (!email) throw new Error("email is required");
@@ -41,7 +41,7 @@ serve(async (req) => {
 
     const html = `
       <div style="font-family: Arial, sans-serif; max-width: 500px; margin: 0 auto; padding: 24px;">
-        <h1 style="color: #7c3aed;">New sign-up request</h1>
+        <h1 style="color: #3990f0;">New sign-up request</h1>
         <p>A user has requested an account and is waiting for approval.</p>
         <div style="background: #f9fafb; border-radius: 8px; padding: 16px; margin: 16px 0;">
           <p style="margin: 4px 0;"><strong>Name:</strong> ${full_name || "—"}</p>
@@ -49,7 +49,7 @@ serve(async (req) => {
           <p style="margin: 4px 0;"><strong>User ID:</strong> ${user_id || "—"}</p>
         </div>
         <p>Go to the admin dashboard to approve or reject this request.</p>
-        <p><a href="${dashboardUrl}" style="color: #7c3aed;">Open dashboard</a></p>
+        <p><a href="${dashboardUrl}" style="color: #3990f0;">Open dashboard</a></p>
       </div>
     `;
 

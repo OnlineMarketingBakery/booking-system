@@ -129,7 +129,7 @@ serve(async (req) => {
 
   if (ownerEmail) {
     const resendKey = Deno.env.get("RESEND_API_KEY");
-    const fromEmail = Deno.env.get("RESEND_FROM_EMAIL") || "noreply@boeking.salonora.eu";
+    const fromEmail = Deno.env.get("RESEND_FROM_EMAIL") || "noreply@booking.salonora.eu";
     if (resendKey) {
       try {
         const resend = new Resend(resendKey);
@@ -139,7 +139,7 @@ serve(async (req) => {
         const verb = action === "accept" ? "accepted" : "declined";
         const html = `
           <div style="font-family: Arial, sans-serif; max-width: 500px; margin: 0 auto; padding: 24px;">
-            <h2 style="color: #7c3aed;">Staff invitation ${action === "accept" ? "accepted" : "declined"}</h2>
+            <h2 style="color: #3990f0;">Staff invitation ${action === "accept" ? "accepted" : "declined"}</h2>
             <p><strong>${inv.email}</strong> ${verb} your invitation to join <strong>${orgName}</strong> as staff.</p>
             ${action === "accept" ? "<p>You can now add them as staff from your dashboard under Staff → Add Staff.</p>" : ""}
           </div>

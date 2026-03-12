@@ -17,13 +17,13 @@ If **every page** (dashboard, auth, etc.) can be put in an iframe, the header is
    Put the `location /book/` block **before** your `location /` block.
 
 3. **Reload Nginx.**  
-   Then only `https://boeking.salonora.eu/book/your-slug` should be embeddable; `/`, `/dashboard`, `/auth`, etc. should not.
+   Then only `https://booking.salonora.eu/book/your-slug` should be embeddable; `/`, `/dashboard`, `/auth`, etc. should not.
 
 ---
 
 ## 1. Add headers in Ploi (Nginx)
 
-1. In **Ploi**, open your server and select the **site** for `boeking.salonora.eu`.
+1. In **Ploi**, open your server and select the **site** for `booking.salonora.eu`.
 2. Go to **Nginx** (or **Nginx Config** / **Edit Nginx configuration**).
 3. Choose one of the following.
 
@@ -110,7 +110,7 @@ server {
 server {
     ...
     charset utf-8;
-    include /etc/nginx/ploi/boeking.salonora.eu/server/*;
+    include /etc/nginx/ploi/booking.salonora.eu/server/*;
 
     location /book/ {
         try_files $uri $uri/ /index.html;
@@ -137,7 +137,7 @@ Remove the three `add_header` lines from the **server** block and add them only 
 ## 4. Check that it worked
 
 1. Reload Nginx and clear cache (browser or CDN).
-2. Open `https://boeking.salonora.eu/book/your-slug` in the browser.
+2. Open `https://booking.salonora.eu/book/your-slug` in the browser.
 3. Open **Developer Tools** → **Network** → select the request → **Headers** → **Response Headers**.
 4. You should see **Content-Security-Policy: frame-ancestors ***. If **X-Frame-Options** is still `sameorigin`, follow step 2 above.
 

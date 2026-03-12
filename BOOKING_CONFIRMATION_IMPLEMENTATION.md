@@ -97,7 +97,7 @@ if (type === "confirm_booking") {
   const subject = `Confirm your booking — ${org_name || "Your Salon"}`;
   const html = `
     <div style="font-family: Arial, sans-serif; max-width: 500px; margin: 0 auto; padding: 24px;">
-      <h1 style="color: #7c3aed; margin-bottom: 8px;">Confirm your booking</h1>
+      <h1 style="color: #3990f0; margin-bottom: 8px;">Confirm your booking</h1>
       <p>Hi ${customer_name || "there"},</p>
       <p>You requested an appointment. Please confirm it by clicking the button below.</p>
       ${formatted_date && formatted_time ? `<div style="background: #f9fafb; border-radius: 8px; padding: 16px; margin: 16px 0;">
@@ -106,12 +106,12 @@ if (type === "confirm_booking") {
         ${service_summary ? `<p style="margin: 4px 0;"><strong>✂️ Services:</strong> ${service_summary}</p>` : ""}
       </div>` : ""}
       <p style="margin: 24px 0;">
-        <a href="${confirm_url}" style="display: inline-block; background: #7c3aed; color: white; padding: 12px 24px; text-decoration: none; border-radius: 8px; font-weight: bold;">Confirm booking</a>
+        <a href="${confirm_url}" style="display: inline-block; background: #3990f0; color: white; padding: 12px 24px; text-decoration: none; border-radius: 8px; font-weight: bold;">Confirm booking</a>
       </p>
       <p style="color: #6b7280; font-size: 14px;">This link expires in 24 hours. If you didn't request this, you can ignore this email.</p>
     </div>
   `;
-  const fromEmail = Deno.env.get("RESEND_FROM_EMAIL") || "noreply@boeking.salonora.eu";
+  const fromEmail = Deno.env.get("RESEND_FROM_EMAIL") || "noreply@booking.salonora.eu";
   await resend.emails.send({
     from: `${org_name || "Salonora"} <${fromEmail}>`,
     to: [customer_email],

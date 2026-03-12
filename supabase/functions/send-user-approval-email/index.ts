@@ -17,7 +17,7 @@ serve(async (req) => {
     if (!resendKey) throw new Error("RESEND_API_KEY is not set");
 
     const resend = new Resend(resendKey);
-    const fromEmail = Deno.env.get("RESEND_FROM_EMAIL") || "noreply@boeking.salonora.eu";
+    const fromEmail = Deno.env.get("RESEND_FROM_EMAIL") || "noreply@booking.salonora.eu";
     const fromName = Deno.env.get("RESEND_FROM_NAME") || "Salonora";
     const { email, full_name } = await req.json();
     if (!email) throw new Error("email is required");
@@ -28,10 +28,10 @@ serve(async (req) => {
 
     const html = `
       <div style="font-family: Arial, sans-serif; max-width: 500px; margin: 0 auto; padding: 24px;">
-        <h1 style="color: #7c3aed;">Your account has been approved</h1>
+        <h1 style="color: #3990f0;">Your account has been approved</h1>
         <p>Hi ${name},</p>
         <p>An admin has approved your account. You can now sign in and use the platform.</p>
-        ${appUrl ? `<p><a href="${loginUrl}" style="color: #7c3aed;">Sign in</a></p>` : "<p>Please go to the app and sign in with your email and password.</p>"}
+        ${appUrl ? `<p><a href="${loginUrl}" style="color: #3990f0;">Sign in</a></p>` : "<p>Please go to the app and sign in with your email and password.</p>"}
         <p style="color: #6b7280; font-size: 14px;">Thank you!</p>
       </div>
     `;

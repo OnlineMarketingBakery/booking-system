@@ -65,7 +65,7 @@ export function OnboardingWizard() {
             <div className="space-y-2">
               <Label htmlFor="salon-slug">Booking URL Slug</Label>
               <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                <span>boeking.salonora.eu/book/</span>
+                <span>booking.salonora.eu/book/</span>
                 <Input
                   id="salon-slug"
                   value={slug}

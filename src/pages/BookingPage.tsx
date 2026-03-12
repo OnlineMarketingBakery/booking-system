@@ -629,7 +629,7 @@ export default function BookingPage() {
         }
         .embed-outline-btn:focus-visible {
           outline: none;
-          box-shadow: 0 0 0 2px var(--embed-button-focus-ring, #7c3aed);
+          box-shadow: 0 0 0 2px var(--embed-button-focus-ring, #3990f0);
         }
         .embed-booking-widget input {
           background-color: var(--embed-input-bg, #ffffff) !important;
@@ -945,17 +945,7 @@ export default function BookingPage() {
                     />
                   </div>
 
-                  <div className="flex items-center space-x-2">
-                    <Checkbox
-                      id="saveMyInfo"
-                      checked={saveMyInfo}
-                      onCheckedChange={(c) => setSaveMyInfo(!!c)}
-                      className="!shadow-none"
-                    />
-                    <Label htmlFor="saveMyInfo" className="text-sm font-normal cursor-pointer">
-                      Save my information for the next time I make an appointment
-                    </Label>
-                  </div>
+                  
 
                   {/* Summary */}
                   <div className="embed-booking-summary rounded-md border p-3 space-y-1">
@@ -972,6 +962,18 @@ export default function BookingPage() {
                       <span>Total ({totalDuration}min)</span>
                       <span>{currencySymbol}{totalPrice.toFixed(2)}</span>
                     </div>
+                  </div>
+
+                  <div className="flex items-center space-x-2">
+                    <Checkbox
+                      id="saveMyInfo"
+                      checked={saveMyInfo}
+                      onCheckedChange={(c) => setSaveMyInfo(!!c)}
+                      className="!shadow-none"
+                    />
+                    <Label htmlFor="saveMyInfo" className="text-sm font-normal cursor-pointer">
+                      Save my information for the next time I make an appointment
+                    </Label>
                   </div>
 
                   <Button type="submit" className="w-full" disabled={booking || isPreviewMode}>

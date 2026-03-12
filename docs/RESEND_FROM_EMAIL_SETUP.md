@@ -9,7 +9,7 @@ Deployed Edge Functions **do not read your local `.env`**. They only use **Supab
    - Direct link pattern: `https://supabase.com/dashboard/project/YOUR_PROJECT_REF/functions/secrets`
 3. Add a secret:
    - **Key:** `RESEND_FROM_EMAIL`
-   - **Value:** your sender address on your **verified** Resend domain, e.g. `noreply@boeking.salonora.eu`
+   - **Value:** your sender address on your **verified** Resend domain, e.g. `noreply@booking.salonora.eu`
 4. Save. **No redeploy needed** — Supabase injects secrets at runtime.
 
 Optional: add `RESEND_FROM_NAME` = `Salonora` if you want to change the display name (default is already "Salonora").
@@ -19,11 +19,11 @@ Optional: add `RESEND_FROM_NAME` = `Salonora` if you want to change the display 
 From your project root:
 
 ```bash
-supabase secrets set RESEND_FROM_EMAIL=noreply@boeking.salonora.eu
+supabase secrets set RESEND_FROM_EMAIL=noreply@booking.salonora.eu
 ```
 
 Use the email address that belongs to a domain you’ve verified in the Resend dashboard.
 
 ## Verify
 
-After setting the secret, trigger an email again (e.g. new sign-up or reject user). In Resend logs, the request body should show `"from": "Salonora <noreply@boeking.salonora.eu>"` (or whatever you set) instead of `onboarding@resend.dev`.
+After setting the secret, trigger an email again (e.g. new sign-up or reject user). In Resend logs, the request body should show `"from": "Salonora <noreply@booking.salonora.eu>"` (or whatever you set) instead of `onboarding@resend.dev`.

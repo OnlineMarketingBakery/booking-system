@@ -3,7 +3,6 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useOrganization } from "@/hooks/useOrganization";
 import { useAuth } from "@/contexts/AuthContext";
-import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -23,7 +22,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Loader2, ChevronLeft, ChevronRight, Calendar, ExternalLink, Plus } from "lucide-react";
+import { Loader2, ChevronLeft, ChevronRight, Calendar, Plus, ExternalLink } from "lucide-react";
 import {
   format,
   startOfWeek,
@@ -145,11 +144,6 @@ export default function CalendarPage() {
     return slots;
   };
 
-  const handleConnectGoogle = () => {
-    const redirectUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/google-auth-callback?action=login&state=${user?.id}`;
-    window.location.href = redirectUrl;
-  };
-
   const openAddBooking = (day?: Date, hour?: number) => {
     if (day != null && hour != null) {
       const start = setMinutes(setHours(startOfDay(day), hour), 0);
@@ -168,6 +162,32 @@ export default function CalendarPage() {
   };
 
   const isLoading = bookingsLoading || (!!gcalConnected && gcalLoading);
+
+  const handleConnectGoogle = () => {
+    const redirectUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/google-auth-callback?action=login&state=${user?.id}`;
+    window.location.href = redirectUrl;
+  };
+
+  // Still loading whether Google Calendar is connected
+  if (user && gcalConnected === undefined) {
+    return (
+      <div className="flex items-center justify-center min-h-[60vh]">
+        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+      </div>
+    );
+  }
+
+  // Not connected: show only centered Connect Google Calendar button
+  if (user && gcalConnected === false) {
+    return (
+      <div className="flex items-center justify-center min-h-[60vh]">
+        <Button onClick={handleConnectGoogle} size="lg" className="gap-2">
+          <ExternalLink className="h-5 w-5" />
+          Connect Google Calendar
+        </Button>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-4">
@@ -200,20 +220,6 @@ export default function CalendarPage() {
           </Button>
         </div>
       </div>
-
-      {!gcalConnected && (
-        <Card>
-          <CardContent className="py-4 flex flex-row items-center justify-between gap-4">
-            <p className="text-sm text-muted-foreground">
-              Connect Google Calendar to see external events alongside your bookings.
-            </p>
-            <Button variant="outline" size="sm" onClick={handleConnectGoogle} className="gap-2 shrink-0">
-              <ExternalLink className="h-4 w-4" />
-              Connect Google Calendar
-            </Button>
-          </CardContent>
-        </Card>
-      )}
 
       {isLoading ? (
         <div className="flex justify-center py-8">

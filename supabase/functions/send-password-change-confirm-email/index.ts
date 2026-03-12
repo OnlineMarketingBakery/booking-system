@@ -17,7 +17,7 @@ serve(async (req) => {
     if (!resendKey) throw new Error("RESEND_API_KEY is not set");
 
     const resend = new Resend(resendKey);
-    const fromEmail = Deno.env.get("RESEND_FROM_EMAIL") || "noreply@boeking.salonora.eu";
+    const fromEmail = Deno.env.get("RESEND_FROM_EMAIL") || "noreply@booking.salonora.eu";
     const fromName = Deno.env.get("RESEND_FROM_NAME") || "Salonora";
     const { email, full_name, confirm_token } = await req.json();
     if (!email || !confirm_token) throw new Error("email and confirm_token are required");
@@ -28,10 +28,10 @@ serve(async (req) => {
 
     const html = `
       <div style="font-family: Arial, sans-serif; max-width: 500px; margin: 0 auto; padding: 24px;">
-        <h1 style="color: #7c3aed;">Confirm your password change</h1>
+        <h1 style="color: #3990f0;">Confirm your password change</h1>
         <p>Hi ${name},</p>
         <p>You requested a password change for your Salonora account. Click the link below to confirm and activate your new password.</p>
-        ${confirmUrl ? `<p><a href="${confirmUrl}" style="display: inline-block; background: #7c3aed; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px;">Confirm password change</a></p>` : ""}
+        ${confirmUrl ? `<p><a href="${confirmUrl}" style="display: inline-block; background: #3990f0; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px;">Confirm password change</a></p>` : ""}
         <p style="color: #6b7280; font-size: 14px;">If you didn't request this change, please contact support or reset your password again.</p>
       </div>
     `;
