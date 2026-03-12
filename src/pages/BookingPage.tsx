@@ -781,8 +781,8 @@ export default function BookingPage() {
                   disabled={selectedServices.length === 0}
                   onClick={() => setStep("time")}
                 >
-                  Doorgaan met service {selectedServices.length}
-                  {selectedServices.length !== 1 ? "s" : ""}
+                  Doorgaan met dienst{selectedServices.length !== 1 ? "en" : ""} {selectedServices.length}
+                  
                 </Button>
                 {/* {staffList.length === 0 && (
                   <p className="text-center text-sm text-muted-foreground">
