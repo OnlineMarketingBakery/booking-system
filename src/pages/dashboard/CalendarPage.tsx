@@ -76,6 +76,7 @@ export default function CalendarPage() {
     enabled: !!organization,
     refetchOnWindowFocus: true,
     refetchInterval: 45 * 1000,
+    staleTime: 0,
   });
 
   // GCal event IDs that are already shown as our bookings (avoid duplicates)
@@ -118,11 +119,13 @@ export default function CalendarPage() {
     enabled: !!user && !!gcalConnected,
     refetchOnWindowFocus: true,
     refetchInterval: 45 * 1000,
+    staleTime: 0,
   });
 
   const getSlotsForDayHour = (day: Date, hour: number): { id: string; source: SlotSource; summary: string; start: string; end: string }[] => {
     const slots: { id: string; source: SlotSource; summary: string; start: string; end: string }[] = [];
     const bookingStartTimestampsInSlot = new Set<number>();
+    const TIME_TOLERANCE_MS = 60 * 1000; // 1 minute: treat as same event if within this window
 
     orgBookings.forEach((b: any) => {
       const start = new Date(b.start_time);
@@ -140,18 +143,19 @@ export default function CalendarPage() {
       }
     });
 
-    // Only show GCal events that are NOT already one of our synced bookings (avoid duplicates)
+    // Only show GCal events that are NOT our synced bookings — never show duplicates
     if (gcalConnected && gcalEvents) {
       gcalEvents.forEach((e: any) => {
         if (!e.start) return;
         if (e.id && syncedGcalIds.has(String(e.id))) return;
         const eDate = new Date(e.start);
         if (!isSameDay(eDate, day) || eDate.getHours() !== hour) return;
-        // Fallback: same start time as a booking and our " — " summary format => treat as same event (gcal_event_id may not have been stored)
         const eTime = new Date(e.start).getTime();
-        const sameTimeAsBooking = bookingStartTimestampsInSlot.has(eTime);
-        const looksLikeOurEvent = typeof e.summary === "string" && e.summary.includes(" — ");
-        if (sameTimeAsBooking && looksLikeOurEvent) return;
+        // Hide if any booking in this slot is at the same time (within 1 min) — guarantees no duplicate
+        const overlapsBooking = [...bookingStartTimestampsInSlot].some(
+          (bt) => Math.abs(eTime - bt) < TIME_TOLERANCE_MS
+        );
+        if (overlapsBooking) return;
         slots.push({
           id: e.id || `gcal-${e.start}`,
           source: "gcal",
