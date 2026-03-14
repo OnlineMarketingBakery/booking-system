@@ -52,6 +52,7 @@ export default function CalendarPage() {
   const [currentWeek, setCurrentWeek] = useState(new Date());
   const [addBookingOpen, setAddBookingOpen] = useState(false);
   const [slotStart, setSlotStart] = useState<Date | null>(null);
+  const [refreshingAfterNavigate, setRefreshingAfterNavigate] = useState(false);
 
   const weekStart = startOfWeek(currentWeek, { weekStartsOn: 1 });
   const weekDays = Array.from({ length: 7 }, (_, i) => addDays(weekStart, i));
@@ -60,7 +61,11 @@ export default function CalendarPage() {
   const rangeEnd = addDays(weekDays[6], 1).toISOString();
 
   // Organization bookings for the week (include gcal_event_id to dedupe with Google Calendar)
-  const { data: orgBookings = [], isLoading: bookingsLoading } = useQuery({
+  const {
+    data: orgBookings = [],
+    isLoading: bookingsLoading,
+    refetch: refetchBookings,
+  } = useQuery({
     queryKey: ["calendar-bookings", organization?.id, rangeStart, rangeEnd],
     queryFn: async () => {
       const { data, error } = await supabase
@@ -103,7 +108,11 @@ export default function CalendarPage() {
   });
 
   // Fetch Google Calendar events for the week
-  const { data: gcalEvents = [], isLoading: gcalLoading } = useQuery({
+  const {
+    data: gcalEvents = [],
+    isLoading: gcalLoading,
+    refetch: refetchGcal,
+  } = useQuery({
     queryKey: ["gcal-events", user?.id, rangeStart],
     queryFn: async () => {
       const { data, error } = await supabase.functions.invoke("fetch-gcal-events", {
@@ -121,6 +130,15 @@ export default function CalendarPage() {
     refetchInterval: 45 * 1000,
     staleTime: 0,
   });
+
+  // When user navigates back to calendar, refetch so we never show stale duplicates
+  useEffect(() => {
+    if (!organization) return;
+    setRefreshingAfterNavigate(true);
+    const p1 = refetchBookings();
+    const p2 = gcalConnected ? refetchGcal() : Promise.resolve();
+    Promise.all([p1, p2]).finally(() => setRefreshingAfterNavigate(false));
+  }, [organization?.id, gcalConnected]);
 
   const getSlotsForDayHour = (day: Date, hour: number): { id: string; source: SlotSource; summary: string; start: string; end: string }[] => {
     const slots: { id: string; source: SlotSource; summary: string; start: string; end: string }[] = [];
@@ -186,7 +204,10 @@ export default function CalendarPage() {
     setSlotStart(null);
   };
 
-  const isLoading = bookingsLoading || (!!gcalConnected && gcalLoading);
+  const isInitialLoading = bookingsLoading || (!!gcalConnected && gcalLoading);
+  const hasCachedData = orgBookings.length > 0 || (!!gcalConnected && gcalEvents.length > 0);
+  // When we have cache and just navigated back, show loading until refetch completes so we never flash duplicates
+  const isLoading = isInitialLoading || (hasCachedData && refreshingAfterNavigate);
 
   const handleConnectGoogle = () => {
     const redirectUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/google-auth-callback?action=login&state=${user?.id}`;
