@@ -12,6 +12,8 @@ import { useSearchParams } from "react-router-dom";
 import { useEffect, useState } from "react";
 import { useToast } from "@/hooks/use-toast";
 import { useSpamProtection } from "@/hooks/useSpamProtection";
+import { HOLIDAY_REGION_OPTIONS } from "@/lib/holidays";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { SpamProtectionFields } from "@/components/SpamProtectionFields";
 import { useQueryClient } from "@tanstack/react-query";
 import { useMutation } from "@tanstack/react-query";
@@ -407,6 +409,36 @@ export default function SettingsPage() {
               </div>
               <p><span className="font-medium">Slug:</span> {organization?.slug}</p>
               <p><span className="font-medium">Stripe:</span> {organization?.stripe_account_id || "Not connected"}</p>
+              <div className="space-y-2 pt-2">
+                <Label className="font-medium">Default holiday region</Label>
+                <p className="text-xs text-muted-foreground">Used for public holidays when the customer has not chosen a region. Manage holidays on the Holidays page.</p>
+                <Select
+                  value={(organization as { holiday_region?: string })?.holiday_region ?? "NL"}
+                  onValueChange={async (v) => {
+                    if (!organization) return;
+                    const { error } = await supabase
+                      .from("organizations")
+                      .update({ holiday_region: v || null })
+                      .eq("id", organization.id);
+                    if (error) toast({ title: "Error", description: error.message, variant: "destructive" });
+                    else {
+                      queryClient.invalidateQueries({ queryKey: ["organization"] });
+                      toast({ title: "Holiday region updated" });
+                    }
+                  }}
+                >
+                  <SelectTrigger className="w-[220px]">
+                    <SelectValue placeholder="Select region" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {HOLIDAY_REGION_OPTIONS.map((opt) => (
+                      <SelectItem key={opt.code} value={opt.code}>
+                        {opt.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
             </CardContent>
           </Card>
 

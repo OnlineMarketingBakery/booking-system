@@ -360,10 +360,75 @@ export type Database = {
           },
         ]
       }
+      organization_holiday_overrides: {
+        Row: {
+          id: string
+          organization_id: string
+          date: string
+          is_working_day: boolean
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          organization_id: string
+          date: string
+          is_working_day?: boolean
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          organization_id?: string
+          date?: string
+          is_working_day?: boolean
+          created_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "organization_holiday_overrides_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      organization_off_days: {
+        Row: {
+          id: string
+          organization_id: string
+          date: string
+          reason: string | null
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          organization_id: string
+          date: string
+          reason?: string | null
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          organization_id?: string
+          date?: string
+          reason?: string | null
+          created_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "organization_off_days_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       organizations: {
         Row: {
           created_at: string
           embed_theme: Record<string, unknown> | null
+          holiday_region: string | null
           id: string
           logo_url: string | null
           name: string
@@ -378,6 +443,7 @@ export type Database = {
         Insert: {
           created_at?: string
           embed_theme?: Record<string, unknown> | null
+          holiday_region?: string | null
           id?: string
           logo_url?: string | null
           name: string
@@ -392,6 +458,7 @@ export type Database = {
         Update: {
           created_at?: string
           embed_theme?: Record<string, unknown> | null
+          holiday_region?: string | null
           id?: string
           logo_url?: string | null
           name?: string
@@ -725,6 +792,7 @@ export type Database = {
         Row: {
           id: string | null
           embed_theme: Record<string, unknown> | null
+          holiday_region: string | null
           logo_url: string | null
           name: string | null
           slug: string | null
@@ -732,6 +800,7 @@ export type Database = {
         Insert: {
           id?: string | null
           embed_theme?: Record<string, unknown> | null
+          holiday_region?: string | null
           logo_url?: string | null
           name?: string | null
           slug?: string | null
@@ -739,6 +808,7 @@ export type Database = {
         Update: {
           id?: string | null
           embed_theme?: Record<string, unknown> | null
+          holiday_region?: string | null
           logo_url?: string | null
           name?: string | null
           slug?: string | null

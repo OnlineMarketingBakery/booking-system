@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Google OAuth Verification – Salonora Readiness</title>
+  <style>
+    body { font-family: Calibri, 'Segoe UI', sans-serif; max-width: 800px; margin: 40px auto; padding: 0 24px; line-height: 1.5; color: #222; }
+    h1 { font-size: 22pt; margin-bottom: 8px; border-bottom: 2px solid #1a73e8; padding-bottom: 8px; }
+    h2 { font-size: 14pt; margin-top: 24px; margin-bottom: 8px; color: #1a73e8; }
+    h3 { font-size: 12pt; margin-top: 16px; margin-bottom: 6px; }
+    p { margin: 0 0 10px 0; }
+    table { border-collapse: collapse; width: 100%; margin: 12px 0; }
+    th, td { border: 1px solid #ddd; padding: 8px 12px; text-align: left; }
+    th { background: #f0f6ff; font-weight: 600; }
+    .checklist { list-style: none; padding-left: 0; }
+    .checklist li { margin: 10px 0; padding-left: 28px; position: relative; }
+    .checklist li::before { content: '☐'; position: absolute; left: 0; font-size: 14pt; }
+    .checklist li.done::before { content: '☑'; }
+    ul.notes { margin: 8px 0; padding-left: 24px; }
+    .meta { font-size: 10pt; color: #666; margin-bottom: 24px; }
+    .section { margin-bottom: 20px; }
+    strong { color: #1a1a1a; }
+  </style>
+</head>
+<body>
+
+<h1>Google OAuth Verification – Salonora Readiness</h1>
+<p class="meta">Document for: Salonora (salonora.eu / booking.salonora.eu). Use this checklist before submitting for verification. Last updated: March 2025.</p>
+
+<!-- ========== CHECKLIST (for owner) ========== -->
+<h2>Verification checklist – Owner</h2>
+<p>Use this list to track progress. Replace ☐ with ☑ (or tick in Word) when an item is done.</p>
+
+<ol class="checklist" start="1">
+  <li><strong>Privacy Policy</strong> – Hosted on salonora.eu (e.g. /privacy or /privacy-policy). Same URL added in OAuth consent screen. Policy explicitly mentions use of Google Calendar (read events to block slots, create events for bookings; no ads, no selling data).</li>
+  <li><strong>Authorized domains</strong> – In Google Cloud Console → OAuth consent screen: salonora.eu and booking.salonora.eu added.</li>
+  <li><strong>Redirect URIs</strong> – In OAuth client credentials: exact callback URL(s) added (e.g. Supabase function URL or your custom redirect).</li>
+  <li><strong>HTTPS</strong> – booking.salonora.eu is served over https (not http) in production.</li>
+  <li><strong>Domain ownership</strong> – salonora.eu (and booking.salonora.eu if applicable) verified in Google Search Console. Verifying account is owner/editor of the GCP project.</li>
+  <li><strong>OAuth consent screen</strong> – Application name (e.g. Salonora), 120×120 logo, user support email, developer contact email, scopes with short justification for Calendar + Calendar.events.</li>
+  <li><strong>Demo video</strong> – Recorded: user on booking app → Connect Google Calendar → full OAuth consent screen in English (same scopes) → back to app → calendar/blocked slots/booking synced to Google Calendar. Link added in verification form.</li>
+</ol>
+
+<p><strong>When all items above are done</strong>, you can submit the app for verification in Google Cloud Console.</p>
+
+<hr style="margin: 32px 0; border: none; border-top: 1px solid #ddd;" />
+
+<!-- ========== DETAILED REQUIREMENTS ========== -->
+<h2>1. What’s already in good shape</h2>
+<table>
+  <tr><th>Requirement</th><th>Status</th><th>Notes</th></tr>
+  <tr><td>Homepage</td><td>✓ OK</td><td>salonora.eu clearly describes the product (salon websites + booking), is not just a login page, and represents the brand.</td></tr>
+  <tr><td>Privacy Policy link</td><td>✓ OK</td><td>Footer has “Privacy Policy” and “Terms & Conditions”.</td></tr>
+  <tr><td>App / brand clarity</td><td>✓ OK</td><td>Name, offer (€50/mo, booking, calendar), and audience (salons) are clear.</td></tr>
+</table>
+
+<h2>2. What to confirm or fix before submitting</h2>
+
+<h3>2.1 Privacy Policy content and URL</h3>
+<ul class="notes">
+  <li><strong>URL:</strong> The policy must be on your domain (e.g. https://salonora.eu/privacy or https://salonora.eu/privacy-policy).</li>
+  <li><strong>Same URL everywhere:</strong> The exact same URL must be linked from the homepage and set as “Privacy Policy” in the OAuth consent screen in Google Cloud Console.</li>
+  <li><strong>Google data:</strong> The policy must explicitly say that you use Google Calendar to read calendar events (to block time slots) and create events (for confirmed bookings), and that this data is not used for ads, not sold, and only for providing the booking/calendar feature.</li>
+</ul>
+<p>If the current policy does not mention Google/Calendar, add a short “Google Calendar” or “Third-party services” section before you submit.</p>
+
+<h3>2.2 Domains in Google Cloud</h3>
+<ul class="notes">
+  <li><strong>Authorized domains (OAuth consent screen):</strong> Add both salonora.eu and booking.salonora.eu (no http/https, just the domain).</li>
+  <li><strong>Redirect URIs (OAuth client):</strong> Add every URL where Google redirects after the user approves. If the callback is on Supabase (e.g. https://pgcvqaexvnwwskdhooly.supabase.co/functions/v1/google-auth-callback), that exact URI must be in the OAuth client’s “Authorized redirect URIs”. If you use a custom redirect on your domain, that URI must be there instead (or as well).</li>
+</ul>
+
+<h3>2.3 Use HTTPS for the booking app</h3>
+<p>You mentioned http://booking.salonora.eu. For production and verification, the app should be served over <strong>https://booking.salonora.eu</strong>. In the consent screen, use https for any app/homepage URLs.</p>
+
+<h3>2.4 Domain ownership (Search Console)</h3>
+<p>salonora.eu (and ideally booking.salonora.eu if it’s a separate property) should be verified in Google Search Console. The Google account that verifies the domain should be owner or editor of the same GCP project you submit for verification. Until this is done, verification can be rejected for “domain ownership”.</p>
+
+<h3>2.5 OAuth consent screen and app info</h3>
+<ul class="notes">
+  <li><strong>Application name:</strong> e.g. “Salonora” (consistent with the site).</li>
+  <li><strong>Logo:</strong> 120×120 px, matches the brand.</li>
+  <li><strong>User support email:</strong> Real, monitored (e.g. info@salonora.nl from the site).</li>
+  <li><strong>Developer contact:</strong> Email(s) Google can use for verification issues.</li>
+  <li><strong>Scopes:</strong> Only Calendar + Calendar events, with a short justification (e.g. “Sync bookings and block availability with the user’s Google Calendar”).</li>
+</ul>
+
+<h3>2.6 Demo video (sensitive scope)</h3>
+<p>Show the full flow: user on booking.salonora.eu (or wherever they connect Google) → “Connect Google Calendar” → full OAuth consent screen in English (same scopes you request) → back to your app → calendar view / blocked slots / a booking synced to Google Calendar. Upload (e.g. unlisted YouTube) and use the link in the verification form.</p>
+
+<h2>3. Summary</h2>
+<p><strong>Homepage and brand:</strong> salonora.eu and publishing the app on booking.salonora.eu are fine for verification as long as the checklist above is completed.</p>
+<p><strong>Before you “put verification on” (submit for verification):</strong> Complete the Privacy Policy (same URL + Google Calendar disclosure), authorized domains and redirect URIs, HTTPS for booking.salonora.eu, domain ownership in Search Console, consent screen details, and the demo video. Then submit.</p>
+
+<hr style="margin: 32px 0; border: none; border-top: 1px solid #ddd;" />
+<p class="meta" style="margin-top: 24px;">Reference: <a href="https://support.google.com/cloud/answer/13464321">Google OAuth verification requirements</a>. Salonora uses Google Calendar API (sensitive scope); no restricted scopes.</p>
+
+</body>
+</html>

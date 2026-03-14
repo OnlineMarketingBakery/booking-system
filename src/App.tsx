@@ -19,6 +19,7 @@ import Services from "./pages/dashboard/Services";
 import CalendarPage from "./pages/dashboard/CalendarPage";
 import Embed from "./pages/dashboard/Embed";
 import SettingsPage from "./pages/dashboard/SettingsPage";
+import HolidaysPage from "./pages/dashboard/HolidaysPage";
 import Customers from "./pages/dashboard/Customers";
 import SuperAdminDashboard from "./pages/dashboard/SuperAdminDashboard";
 import BookingPage from "./pages/BookingPage";
@@ -62,6 +63,7 @@ const App = () => (
               <Route path="services" element={<Services />} />
               <Route path="calendar" element={<CalendarPage />} />
               <Route path="embed" element={<Embed />} />
+              <Route path="holidays" element={<HolidaysPage />} />
               <Route path="customers" element={<Customers />} />
               <Route path="admin" element={<SuperAdminDashboard />} />
               <Route path="settings" element={<SettingsPage />} />

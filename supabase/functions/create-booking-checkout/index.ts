@@ -1,6 +1,7 @@
 import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import Stripe from "https://esm.sh/stripe@18.5.0";
 import { createClient } from "npm:@supabase/supabase-js@2.57.2";
+import Holidays from "npm:date-holidays@3.26.9";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -130,10 +131,51 @@ serve(async (req) => {
     // Verify organization, location, and staff exist and are active
     const { data: org, error: orgError } = await supabaseClient
       .from("organizations")
-      .select("name")
+      .select("name, holiday_region")
       .eq("id", organization_id)
       .single();
     if (orgError || !org) throw new Error("Organization not found");
+
+    // Check that the booking date is not an off day (holidays or custom off days)
+    const regionCode = (body.region as string) || (org as { holiday_region?: string }).holiday_region || "NL";
+    const startDate = new Date(start_time);
+    const dateStr = startDate.toISOString().slice(0, 10);
+    const year = startDate.getFullYear();
+
+    const { data: customOffDays = [] } = await supabaseClient
+      .from("organization_off_days")
+      .select("date")
+      .eq("organization_id", organization_id)
+      .eq("date", dateStr);
+    if (customOffDays.length > 0) {
+      return new Response(
+        JSON.stringify({ error: "This date is not available for booking (closed)." }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" }, status: 400 }
+      );
+    }
+
+    const { data: overrides = [] } = await supabaseClient
+      .from("organization_holiday_overrides")
+      .select("date, is_working_day")
+      .eq("organization_id", organization_id)
+      .eq("date", dateStr);
+    const isWorkingOverride = overrides.some((r: { is_working_day: boolean }) => r.is_working_day);
+
+    const hd = new Holidays(regionCode);
+    const holidays = hd.getHolidays(year) || [];
+    const holidayDates = new Set(
+      (holidays as { date?: string; start?: Date }[]).map((h) => {
+        if (typeof h.date === "string") return h.date.slice(0, 10);
+        if (h.start instanceof Date) return h.start.toISOString().slice(0, 10);
+        return "";
+      }).filter(Boolean)
+    );
+    if (holidayDates.has(dateStr) && !isWorkingOverride) {
+      return new Response(
+        JSON.stringify({ error: "This date is a public holiday and not available for booking." }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" }, status: 400 }
+      );
+    }
 
     const { data: loc, error: locError } = await supabaseClient
       .from("locations")

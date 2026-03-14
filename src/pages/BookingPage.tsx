@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useParams, useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
@@ -20,6 +20,11 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { Checkbox } from "@/components/ui/checkbox";
 import { useToast } from "@/hooks/use-toast";
 import { useSpamProtection } from "@/hooks/useSpamProtection";
@@ -43,8 +48,10 @@ import {
   setHours,
   setMinutes,
 } from "date-fns";
+import { Day } from "react-day-picker";
 import { DEFAULT_EMBED_THEME, hexToHsl, hexToHslWithAlpha, hexToRgba, getContrastingTextColors } from "@/types/embedTheme";
 import type { EmbedTheme } from "@/types/embedTheme";
+import { getHolidayDatesForYears, getHolidaysWithNames } from "@/lib/holidays";
 
 type Step = "location" | "service" | "time" | "details" | "confirmed" | "confirm_email_sent";
 
@@ -93,7 +100,7 @@ export default function BookingPage() {
     queryFn: async () => {
       const { data, error } = await supabase
         .from("organizations_public")
-        .select("id, name, slug, logo_url, embed_theme")
+        .select("id, name, slug, logo_url, embed_theme, holiday_region")
         .eq("slug", slug)
         .maybeSingle();
       if (error) throw error;
@@ -101,6 +108,71 @@ export default function BookingPage() {
     },
     enabled: !!slug && !isSuccess && !isCancel,
   });
+
+  const adminRegion = (org as { holiday_region?: string } | null)?.holiday_region ?? "NL";
+
+  const { data: holidayOverrides = [] } = useQuery({
+    queryKey: ["booking-holiday-overrides", org?.id],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("organization_holiday_overrides")
+        .select("date, is_working_day")
+        .eq("organization_id", org!.id);
+      if (error) throw error;
+      return (data ?? []).map((r) => ({
+        date: (r.date as string).slice(0, 10),
+        is_working_day: r.is_working_day,
+      }));
+    },
+    enabled: !!org?.id,
+  });
+
+  const { data: offDaysList = [] } = useQuery({
+    queryKey: ["booking-off-days", org?.id],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("organization_off_days")
+        .select("date, reason")
+        .eq("organization_id", org!.id);
+      if (error) throw error;
+      return (data ?? []).map((r) => ({
+        date: (r.date as string).slice(0, 10),
+        reason: (r as { reason?: string | null }).reason ?? null,
+      }));
+    },
+    enabled: !!org?.id,
+  });
+
+  const offDaysSet = useMemo(() => new Set(offDaysList.map((o) => o.date)), [offDaysList]);
+  const offDayReasonMap = useMemo(
+    () => new Map(offDaysList.map((o) => [o.date, o.reason?.trim() || "Closed"])),
+    [offDaysList]
+  );
+  const holidayWorkingOverrideSet = useMemo(
+    () => new Set(holidayOverrides.filter((o) => o.is_working_day).map((o) => o.date)),
+    [holidayOverrides]
+  );
+  const holidayYears = useMemo(() => {
+    const y = new Date().getFullYear();
+    return [y, y + 1];
+  }, []);
+  const holidayNameMap = useMemo(() => {
+    const entries = getHolidaysWithNames(adminRegion, holidayYears);
+    return new Map(entries.map((e) => [e.date, e.name ?? "Public holiday"]));
+  }, [adminRegion, holidayYears]);
+  const holidayDatesSet = useMemo(
+    () => new Set(getHolidayDatesForYears(adminRegion, holidayYears)),
+    [adminRegion, holidayYears]
+  );
+
+  const isOffDay = useMemo(() => {
+    return (date: Date) => {
+      const dateStr = format(date, "yyyy-MM-dd");
+      if (offDaysSet.has(dateStr)) return true;
+      if (holidayDatesSet.has(dateStr) && !holidayWorkingOverrideSet.has(dateStr)) return true;
+      return false;
+    };
+  }, [offDaysSet, holidayDatesSet, holidayWorkingOverrideSet]);
 
   const { data: locations = [] } = useQuery({
     queryKey: ["booking-locations", org?.id],
@@ -212,10 +284,29 @@ export default function BookingPage() {
     enabled: !!selectedLocation,
   });
 
+  const getOffDayReason = useMemo(() => {
+    return (date: Date): string | null => {
+      const dateStr = format(date, "yyyy-MM-dd");
+      if (isBefore(date, new Date(new Date().toDateString()))) return "Past date";
+      if (locationAvailDays.length > 0 && !locationAvailDays.includes(date.getDay()))
+        return "De locatie is vandaag gesloten.";
+      if (offDayReasonMap.has(dateStr)) return offDayReasonMap.get(dateStr)!;
+      if (holidayDatesSet.has(dateStr) && !holidayWorkingOverrideSet.has(dateStr))
+        return `Feestdag: ${holidayNameMap.get(dateStr) ?? "Vakantie"}`;
+      return null;
+    };
+  }, [locationAvailDays, offDayReasonMap, holidayDatesSet, holidayWorkingOverrideSet, holidayNameMap]);
+
   const { data: timeSlots = [] } = useQuery({
-    queryKey: ["booking-slots", selectedLocation, selectedStaff, selectedDate, selectedServices],
+    queryKey: ["booking-slots", selectedLocation, selectedStaff, selectedDate, selectedServices, holidayOverrides, offDaysList, adminRegion],
     queryFn: async () => {
-      const dayOfWeek = new Date(selectedDate + "T00:00:00").getDay();
+      const dateStr = selectedDate;
+      if (offDaysSet.has(dateStr)) return [];
+      const holidayDatesForRegion = getHolidayDatesForYears(adminRegion, holidayYears);
+      const isWorkingOverride = holidayOverrides.some((o) => o.date === dateStr && o.is_working_day);
+      if (holidayDatesForRegion.includes(dateStr) && !isWorkingOverride) return [];
+      const selDate = new Date(dateStr + "T00:00:00");
+      const dayOfWeek = selDate.getDay();
       const { data: avail } = await supabase
         .from("location_availability")
         .select("*")
@@ -363,6 +454,7 @@ export default function BookingPage() {
             customer_phone: phone,
             start_time: startTime.toISOString(),
             save_my_info: saveMyInfo,
+            region: adminRegion,
           },
         },
       );
@@ -826,8 +918,30 @@ export default function BookingPage() {
                       disabled={(date) =>
                         isBefore(date, new Date(new Date().toDateString())) ||
                         (locationAvailDays.length > 0 &&
-                          !locationAvailDays.includes(date.getDay()))
+                          !locationAvailDays.includes(date.getDay())) ||
+                        isOffDay(date)
                       }
+                      components={{
+                        Day: (dayProps) => {
+                          const reason = getOffDayReason(dayProps.date);
+                          const content = <Day {...dayProps} />;
+                          if (reason) {
+                            return (
+                              <Tooltip delayDuration={200}>
+                                <TooltipTrigger asChild>
+                                  <span className="inline-flex size-full cursor-not-allowed items-center justify-center [&_button]:pointer-events-none">
+                                    {content}
+                                  </span>
+                                </TooltipTrigger>
+                                <TooltipContent side="top" className="max-w-[220px]">
+                                  {reason}
+                                </TooltipContent>
+                              </Tooltip>
+                            );
+                          }
+                          return content;
+                        },
+                      }}
                       className="embed-booking-calendar rounded-md border"
                       classNames={{
                         cell: "h-9 w-9 text-center text-sm p-0 relative [&:has([aria-selected].day-range-end)]:rounded-r-md [&:has([aria-selected].day-outside)]:bg-primary/50 [&:has([aria-selected])]:bg-primary first:[&:has([aria-selected])]:rounded-l-md last:[&:has([aria-selected])]:rounded-r-md focus-within:relative focus-within:z-20",
@@ -865,7 +979,12 @@ export default function BookingPage() {
                     </div>
                     {timeSlots.filter((t) => t.available).length === 0 && (
                       <p className="text-center text-muted-foreground py-8 text-sm">
-                        Er zijn geen plaatsen meer beschikbaar voor deze datum.
+                        {(() => {
+                          const reason = getOffDayReason(parsedSelectedDate);
+                          return reason
+                            ? `${reason}`
+                            : "Er zijn geen plaatsen meer beschikbaar voor deze datum.";
+                        })()}
                       </p>
                     )}
                   </div>
