@@ -236,11 +236,22 @@ export default function SettingsPage() {
 
   useEffect(() => {
     if (searchParams.get("gcal") === "connected") {
-      toast({ title: "Google Calendar connected!", description: "Your calendar is now synced." });
+      toast({ title: "Google Calendar connected!", description: "Existing and future bookings will appear in your Google Calendar." });
       setSearchParams({});
       refetch();
+      // Sync previously created bookings to Google Calendar (server-side fire-and-forget often doesn't complete before redirect)
+      if (user?.id) {
+        supabase.functions
+          .invoke("backfill-bookings-to-gcal", { body: { user_id: user.id } })
+          .then((res) => {
+            if (res.data?.synced > 0) {
+              toast({ title: "Past bookings synced", description: `${res.data.synced} existing booking(s) added to your Google Calendar.` });
+            }
+          })
+          .catch(() => {});
+      }
     }
-  }, [searchParams]);
+  }, [searchParams, user?.id]);
 
   const handleConnectGoogle = () => {
     const redirectUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/google-auth-callback?action=login&state=${user?.id}`;
@@ -255,6 +266,26 @@ export default function SettingsPage() {
     refetch();
     toast({ title: "Google Calendar disconnected" });
   };
+
+  const syncExistingBookings = useMutation({
+    mutationFn: async () => {
+      const { data, error } = await supabase.functions.invoke("backfill-bookings-to-gcal", {
+        body: { user_id: user!.id },
+      });
+      if (error) throw error;
+      return data as { synced?: number; total?: number; message?: string };
+    },
+    onSuccess: (data) => {
+      if (data?.synced && data.synced > 0) {
+        toast({ title: "Past bookings synced", description: `${data.synced} booking(s) added to your Google Calendar.` });
+      } else {
+        toast({ title: "No bookings to sync", description: "All your bookings are already in Google Calendar." });
+      }
+    },
+    onError: () => {
+      toast({ title: "Sync failed", description: "Could not sync existing bookings. Try again.", variant: "destructive" });
+    },
+  });
 
   const handleChangePassword = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -626,12 +657,22 @@ export default function SettingsPage() {
               <CardDescription>Sync bookings and block availability from your Google Calendar</CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
-              <div className="flex items-center gap-3">
+              <div className="flex items-center gap-3 flex-wrap">
                 {gcalConnected ? (
                   <>
                     <Badge className="bg-primary/10 text-primary border-primary/30 gap-1">
                       <CheckCircle2 className="h-3 w-3" /> Connected
                     </Badge>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => syncExistingBookings.mutate()}
+                      disabled={syncExistingBookings.isPending}
+                      className="gap-1"
+                    >
+                      {syncExistingBookings.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : <Calendar className="h-3 w-3" />}
+                      Sync existing bookings
+                    </Button>
                     <Button variant="outline" size="sm" onClick={handleDisconnect} className="text-destructive gap-1">
                       <XCircle className="h-3 w-3" /> Disconnect
                     </Button>
@@ -645,8 +686,8 @@ export default function SettingsPage() {
               </div>
               <p className="text-xs text-muted-foreground">
                 {gcalConnected
-                  ? "Bookings will automatically appear in your Google Calendar. Your Google Calendar events will block availability in the booking system."
-                  : "Connect your Google account to automatically sync bookings and use your calendar events to block availability."}
+                  ? "New bookings sync automatically. Use “Sync existing bookings” to add past bookings to Google Calendar. Your Google Calendar events block availability in the booking system."
+                  : "Connect your Google account to sync existing and future bookings to Google Calendar and use your calendar events to block availability."}
               </p>
             </CardContent>
           </Card>

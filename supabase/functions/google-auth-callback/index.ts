@@ -92,6 +92,20 @@ Deno.serve(async (req) => {
       return new Response(`DB error: ${error.message}`, { status: 500 });
     }
 
+    // Backfill existing bookings to Google Calendar so they appear on the admin's phone/app
+    try {
+      fetch(`${SUPABASE_URL}/functions/v1/backfill-bookings-to-gcal`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+        },
+        body: JSON.stringify({ user_id: state }),
+      }).catch((e) => console.error("Backfill trigger failed:", e));
+    } catch (_) {
+      // Don't block redirect
+    }
+
     // Redirect back to the app settings page
     const appUrl = Deno.env.get("APP_URL") || "http://localhost:8080";
     return new Response(null, {

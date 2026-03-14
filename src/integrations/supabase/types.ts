@@ -131,6 +131,7 @@ export type Database = {
           customer_name: string
           customer_phone: string | null
           end_time: string
+          gcal_event_id: string | null
           id: string
           location_id: string
           notes: string | null
@@ -149,6 +150,7 @@ export type Database = {
           customer_name: string
           customer_phone?: string | null
           end_time: string
+          gcal_event_id?: string | null
           id?: string
           location_id: string
           notes?: string | null
@@ -167,6 +169,7 @@ export type Database = {
           customer_name?: string
           customer_phone?: string | null
           end_time?: string
+          gcal_event_id?: string | null
           id?: string
           location_id?: string
           notes?: string | null

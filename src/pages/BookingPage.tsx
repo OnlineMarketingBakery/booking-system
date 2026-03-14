@@ -331,35 +331,22 @@ export default function BookingPage() {
           .neq("status", "cancelled");
         existing = existingData ?? [];
         try {
-          const { data: staffRow } = await supabase
-            .from("staff_public")
-            .select("organization_id")
-            .eq("id", selectedStaff)
-            .single();
-          if (staffRow) {
-            const { data: orgRow } = await supabase
-              .from("organizations_public")
-              .select("id")
-              .eq("id", staffRow.organization_id!)
-              .single();
-            if (orgRow) {
-              const { data: gcalData } = await supabase.functions.invoke(
-                "fetch-gcal-events",
-                {
-                  body: {
-                    user_id: org!.id,
-                    time_min: dayStart,
-                    time_max: dayEnd,
-                  },
-                },
-              );
-              if (gcalData?.events) {
-                gcalEvents = gcalData.events.map((e: any) => ({
-                  start: e.start,
-                  end: e.end,
-                }));
-              }
-            }
+          // Only fetch Google Calendar events when the org has connected Google (optional sync)
+          const { data: gcalData } = await supabase.functions.invoke(
+            "fetch-gcal-events",
+            {
+              body: {
+                organization_id: org!.id,
+                time_min: dayStart,
+                time_max: dayEnd,
+              },
+            },
+          );
+          if (gcalData?.events) {
+            gcalEvents = gcalData.events.map((e: any) => ({
+              start: e.start,
+              end: e.end,
+            }));
           }
         } catch {
           // Silently ignore gcal fetch errors for public booking

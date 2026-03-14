@@ -63,16 +63,24 @@ Deno.serve(async (req) => {
 
     const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
-    // Get booking with org info
+    // Get booking with org info (include gcal_event_id to skip already-synced)
     const { data: booking, error: bErr } = await supabase
       .from("bookings")
-      .select("*, services(name), staff(name), locations(name), organizations(owner_id)")
+      .select("*, services(name), staff(name), locations(name), organizations(owner_id), gcal_event_id")
       .eq("id", booking_id)
       .single();
 
     if (bErr || !booking) {
       return new Response(JSON.stringify({ error: "Booking not found" }), {
         status: 404,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    // Already synced to Google Calendar (e.g. from a previous connection or backfill)
+    if ((booking as any).gcal_event_id) {
+      return new Response(JSON.stringify({ success: true, event_id: (booking as any).gcal_event_id, skipped: true, reason: "Already synced" }), {
+        status: 200,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
@@ -117,6 +125,12 @@ Deno.serve(async (req) => {
         status: 500,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
+    }
+
+    // Store so we don't create duplicates on reconnect or double-sync (ignore if column missing)
+    const { error: updateErr } = await supabase.from("bookings").update({ gcal_event_id: gcalData.id }).eq("id", booking_id);
+    if (updateErr) {
+      // Column may not exist yet (migration not run)
     }
 
     return new Response(JSON.stringify({ success: true, event_id: gcalData.id }), {

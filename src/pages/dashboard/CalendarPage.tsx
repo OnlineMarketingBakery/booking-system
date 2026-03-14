@@ -168,27 +168,6 @@ export default function CalendarPage() {
     window.location.href = redirectUrl;
   };
 
-  // Still loading whether Google Calendar is connected
-  if (user && gcalConnected === undefined) {
-    return (
-      <div className="flex items-center justify-center min-h-[60vh]">
-        <Loader2 className="h-8 w-8 animate-spin text-primary" />
-      </div>
-    );
-  }
-
-  // Not connected: show only centered Connect Google Calendar button
-  if (user && gcalConnected === false) {
-    return (
-      <div className="flex items-center justify-center min-h-[60vh]">
-        <Button onClick={handleConnectGoogle} size="lg" className="gap-2">
-          <ExternalLink className="h-5 w-5" />
-          Connect Google Calendar
-        </Button>
-      </div>
-    );
-  }
-
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between flex-wrap gap-2">
@@ -204,10 +183,15 @@ export default function CalendarPage() {
             <Plus className="h-4 w-4" />
             Add booking
           </Button>
-          {gcalConnected && (
+          {gcalConnected ? (
             <Badge variant="outline" className="text-xs bg-primary/10 text-primary border-primary/30">
               Google connected
             </Badge>
+          ) : (
+            <Button variant="outline" size="sm" onClick={handleConnectGoogle} className="gap-2">
+              <ExternalLink className="h-4 w-4" />
+              Connect Google Calendar
+            </Button>
           )}
           <Button variant="outline" size="icon" onClick={() => setCurrentWeek((w) => subWeeks(w, 1))}>
             <ChevronLeft className="h-4 w-4" />

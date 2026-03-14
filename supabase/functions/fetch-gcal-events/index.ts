@@ -49,15 +49,15 @@ Deno.serve(async (req) => {
   }
 
   try {
-    let body: { user_id?: string; time_min?: string; time_max?: string } = {};
+    let body: { user_id?: string; organization_id?: string; time_min?: string; time_max?: string } = {};
     try {
       body = await req.json();
     } catch {
       body = {};
     }
-    const { user_id, time_min, time_max } = body;
-    if (!user_id) {
-      return new Response(JSON.stringify({ error: "user_id is required" }), {
+    const { user_id: bodyUserId, organization_id, time_min, time_max } = body;
+    if (!bodyUserId && !organization_id) {
+      return new Response(JSON.stringify({ error: "user_id or organization_id is required" }), {
         status: 400,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
@@ -69,6 +69,23 @@ Deno.serve(async (req) => {
     const GOOGLE_CLIENT_SECRET = Deno.env.get("GOOGLE_CLIENT_SECRET")!;
 
     const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
+
+    // Resolve user_id: use body user_id, or look up org owner when organization_id is provided
+    let user_id = bodyUserId;
+    if (!user_id && organization_id) {
+      const { data: org } = await supabase
+        .from("organizations")
+        .select("owner_id")
+        .eq("id", organization_id)
+        .single();
+      user_id = org?.owner_id ?? null;
+    }
+    if (!user_id) {
+      return new Response(JSON.stringify({ events: [], connected: false }), {
+        status: 200,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
 
     const accessToken = await getValidAccessToken(supabase, user_id, GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET);
     if (!accessToken) {
