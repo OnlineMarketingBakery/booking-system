@@ -59,13 +59,13 @@ export default function CalendarPage() {
   const rangeStart = weekDays[0].toISOString();
   const rangeEnd = addDays(weekDays[6], 1).toISOString();
 
-  // Organization bookings for the week
+  // Organization bookings for the week (include gcal_event_id to dedupe with Google Calendar)
   const { data: orgBookings = [], isLoading: bookingsLoading } = useQuery({
     queryKey: ["calendar-bookings", organization?.id, rangeStart, rangeEnd],
     queryFn: async () => {
       const { data, error } = await supabase
         .from("bookings")
-        .select("*, services(name, duration_minutes), staff(name)")
+        .select("*, services(name, duration_minutes), staff(name), gcal_event_id")
         .eq("organization_id", organization!.id)
         .gte("start_time", rangeStart)
         .lt("start_time", rangeEnd)
@@ -74,7 +74,18 @@ export default function CalendarPage() {
       return data || [];
     },
     enabled: !!organization,
+    refetchOnWindowFocus: true,
+    refetchInterval: 45 * 1000,
   });
+
+  // GCal event IDs that are already shown as our bookings (avoid duplicates)
+  const syncedGcalIds = useMemo(() => {
+    const ids = new Set<string>();
+    orgBookings.forEach((b: any) => {
+      if (b.gcal_event_id) ids.add(String(b.gcal_event_id));
+    });
+    return ids;
+  }, [orgBookings]);
 
   // Check if Google Calendar is connected
   const { data: gcalConnected } = useQuery({
@@ -105,14 +116,18 @@ export default function CalendarPage() {
       return data?.events || [];
     },
     enabled: !!user && !!gcalConnected,
+    refetchOnWindowFocus: true,
+    refetchInterval: 45 * 1000,
   });
 
   const getSlotsForDayHour = (day: Date, hour: number): { id: string; source: SlotSource; summary: string; start: string; end: string }[] => {
     const slots: { id: string; source: SlotSource; summary: string; start: string; end: string }[] = [];
+    const bookingStartTimestampsInSlot = new Set<number>();
 
     orgBookings.forEach((b: any) => {
       const start = new Date(b.start_time);
       if (isSameDay(start, day) && start.getHours() === hour) {
+        bookingStartTimestampsInSlot.add(new Date(b.start_time).getTime());
         const svc = b.services as { name?: string } | null;
         const staffName = (b.staff as { name?: string } | null)?.name;
         slots.push({
@@ -125,19 +140,25 @@ export default function CalendarPage() {
       }
     });
 
+    // Only show GCal events that are NOT already one of our synced bookings (avoid duplicates)
     if (gcalConnected && gcalEvents) {
       gcalEvents.forEach((e: any) => {
         if (!e.start) return;
+        if (e.id && syncedGcalIds.has(String(e.id))) return;
         const eDate = new Date(e.start);
-        if (isSameDay(eDate, day) && eDate.getHours() === hour) {
-          slots.push({
-            id: e.id || `gcal-${e.start}`,
-            source: "gcal",
-            summary: e.summary || "Event",
-            start: e.start,
-            end: e.end || e.start,
-          });
-        }
+        if (!isSameDay(eDate, day) || eDate.getHours() !== hour) return;
+        // Fallback: same start time as a booking and our " — " summary format => treat as same event (gcal_event_id may not have been stored)
+        const eTime = new Date(e.start).getTime();
+        const sameTimeAsBooking = bookingStartTimestampsInSlot.has(eTime);
+        const looksLikeOurEvent = typeof e.summary === "string" && e.summary.includes(" — ");
+        if (sameTimeAsBooking && looksLikeOurEvent) return;
+        slots.push({
+          id: e.id || `gcal-${e.start}`,
+          source: "gcal",
+          summary: e.summary || "Event",
+          start: e.start,
+          end: e.end || e.start,
+        });
       });
     }
 
