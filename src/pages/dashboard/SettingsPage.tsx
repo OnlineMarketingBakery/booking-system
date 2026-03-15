@@ -259,12 +259,17 @@ export default function SettingsPage() {
   };
 
   const handleDisconnect = async () => {
-    await supabase
-      .from("google_calendar_tokens")
-      .delete()
-      .eq("user_id", user!.id);
+    const { data, error } = await supabase.functions.invoke("disconnect-gcal");
+    if (error) {
+      toast({ title: "Disconnect failed", description: error.message, variant: "destructive" });
+      return;
+    }
     refetch();
-    toast({ title: "Google Calendar disconnected" });
+    const transferred = (data as { transferred?: number })?.transferred ?? 0;
+    toast({
+      title: "Google Calendar disconnected",
+      description: transferred > 0 ? `${transferred} event(s) transferred to your calendar.` : undefined,
+    });
   };
 
   const syncExistingBookings = useMutation({

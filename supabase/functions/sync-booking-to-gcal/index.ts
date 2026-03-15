@@ -93,6 +93,23 @@ Deno.serve(async (req) => {
       });
     }
 
+    // Only sync bookings created after user's last GCal disconnect (avoid re-pushing transferred events)
+    const { data: lastDisconnect } = await supabase
+      .from("gcal_disconnect_log")
+      .select("disconnected_at")
+      .eq("user_id", ownerId)
+      .order("disconnected_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    const disconnectedAt = lastDisconnect?.disconnected_at ? new Date(lastDisconnect.disconnected_at) : null;
+    const bookingCreatedAt = new Date(booking.created_at);
+    if (disconnectedAt && bookingCreatedAt < disconnectedAt) {
+      return new Response(JSON.stringify({ skipped: true, reason: "Booking predates last disconnect (already in GCal)" }), {
+        status: 200,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
     const accessToken = await getValidAccessToken(supabase, ownerId, GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET);
     if (!accessToken) {
       return new Response(JSON.stringify({ skipped: true, reason: "No Google Calendar connected" }), {
@@ -101,12 +118,22 @@ Deno.serve(async (req) => {
       });
     }
 
-    // Create Google Calendar event
+    // Create Google Calendar event (extendedProperties allow filtering by location and round-trip on disconnect)
     const event = {
       summary: `${booking.customer_name} — ${(booking.services as any)?.name || "Appointment"}`,
       description: `Staff: ${(booking.staff as any)?.name}\nLocation: ${(booking.locations as any)?.name}\nEmail: ${booking.customer_email}\nPhone: ${booking.customer_phone || "N/A"}\nStatus: ${booking.status}`,
       start: { dateTime: booking.start_time, timeZone: "UTC" },
       end: { dateTime: booking.end_time, timeZone: "UTC" },
+      extendedProperties: {
+        private: {
+          location_id: booking.location_id,
+          organization_id: booking.organization_id,
+          service_id: booking.service_id,
+          customer_name: booking.customer_name,
+          customer_email: booking.customer_email,
+          ...(booking.staff_id && { staff_id: booking.staff_id }),
+        },
+      },
     };
 
     const gcalRes = await fetch("https://www.googleapis.com/calendar/v3/calendars/primary/events", {

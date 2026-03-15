@@ -129,13 +129,20 @@ Deno.serve(async (req) => {
       );
     }
 
-    const events = (gcalData.items || []).map((e: any) => ({
-      id: e.id,
-      summary: e.summary || "(No title)",
-      start: e.start?.dateTime || e.start?.date,
-      end: e.end?.dateTime || e.end?.date,
-      description: e.description || "",
-    }));
+    const events = (gcalData.items || []).map((e: any) => {
+      const priv = e.extendedProperties?.private || {};
+      return {
+        id: e.id,
+        summary: e.summary || "(No title)",
+        start: e.start?.dateTime || e.start?.date,
+        end: e.end?.dateTime || e.end?.date,
+        description: e.description || "",
+        location_id: priv.location_id || null,
+        organization_id: priv.organization_id || null,
+        service_id: priv.service_id || null,
+        staff_id: priv.staff_id || null,
+      };
+    });
 
     return new Response(JSON.stringify({ events, connected: true }), {
       status: 200,

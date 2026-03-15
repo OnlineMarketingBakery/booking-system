@@ -166,6 +166,7 @@ export default function Bookings() {
                 <TableHead>Service</TableHead>
                 <TableHead>VAT</TableHead>
                 <TableHead>Staff</TableHead>
+                <TableHead>Location</TableHead>
                 <TableHead>Date & Time</TableHead>
                 <TableHead>Status</TableHead>
                 <TableHead className="text-right">Actions</TableHead>
@@ -173,7 +174,7 @@ export default function Bookings() {
             </TableHeader>
             <TableBody>
               {filtered.length === 0 ? (
-                <TableRow><TableCell colSpan={7} className="text-center text-muted-foreground py-8">No bookings found</TableCell></TableRow>
+                <TableRow><TableCell colSpan={8} className="text-center text-muted-foreground py-8">No bookings found</TableCell></TableRow>
               ) : (
                 filtered.map((b) => {
                   const svc = b.services as { name?: string; duration_minutes?: number; price?: number; currency?: string; vat_rates?: { name?: string; percentage?: number | null } | null; vat_rate?: { name?: string; percentage?: number | null } | null } | null;
@@ -204,6 +205,7 @@ export default function Bookings() {
                         </SelectContent>
                       </Select>
                     </TableCell>
+                    <TableCell className="text-muted-foreground">{(b.locations as any)?.name ?? "—"}</TableCell>
                     <TableCell>
                       <div>{format(new Date(b.start_time), "MMM d, yyyy")}</div>
                       <div className="text-xs text-muted-foreground">{format(new Date(b.start_time), "h:mm a")} – {format(new Date(b.end_time), "h:mm a")}</div>

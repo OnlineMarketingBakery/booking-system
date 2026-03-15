@@ -30,6 +30,9 @@ verify_jwt = false
 [functions.backfill-bookings-to-gcal]
 verify_jwt = false
 
+[functions.disconnect-gcal]
+verify_jwt = false
+
 [functions.send-booking-reminders]
 verify_jwt = false
 

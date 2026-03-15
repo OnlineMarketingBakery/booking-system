@@ -22,7 +22,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Loader2, ChevronLeft, ChevronRight, Calendar, Plus, ExternalLink } from "lucide-react";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Loader2, ChevronLeft, ChevronRight, Calendar, Plus, ExternalLink, MapPin } from "lucide-react";
 import {
   format,
   startOfWeek,
@@ -53,6 +54,7 @@ export default function CalendarPage() {
   const [addBookingOpen, setAddBookingOpen] = useState(false);
   const [slotStart, setSlotStart] = useState<Date | null>(null);
   const [refreshingAfterNavigate, setRefreshingAfterNavigate] = useState(false);
+  const [selectedLocationId, setSelectedLocationId] = useState<string>("");
 
   const weekStart = startOfWeek(currentWeek, { weekStartsOn: 1 });
   const weekDays = Array.from({ length: 7 }, (_, i) => addDays(weekStart, i));
@@ -84,14 +86,35 @@ export default function CalendarPage() {
     staleTime: 0,
   });
 
-  // GCal event IDs that are already shown as our bookings (avoid duplicates)
-  const syncedGcalIds = useMemo(() => {
-    const ids = new Set<string>();
-    orgBookings.forEach((b: any) => {
-      if (b.gcal_event_id) ids.add(String(b.gcal_event_id));
-    });
-    return ids;
-  }, [orgBookings]);
+  // Locations for tabs (each tab shows that location's calendar only)
+  const { data: locations = [] } = useQuery({
+    queryKey: ["locations", organization?.id],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("locations")
+        .select("id, name")
+        .eq("organization_id", organization!.id)
+        .eq("is_active", true)
+        .order("name");
+      if (error) throw error;
+      return data ?? [];
+    },
+    enabled: !!organization,
+  });
+
+  // Default to first location when locations load
+  useEffect(() => {
+    if (locations.length > 0 && !selectedLocationId) {
+      setSelectedLocationId(locations[0].id);
+    }
+    if (locations.length > 0 && selectedLocationId && !locations.some((l) => l.id === selectedLocationId)) {
+      setSelectedLocationId(locations[0].id);
+    }
+  }, [locations, selectedLocationId]);
+
+  // Resolve which location is active (for tabs and for Add booking default)
+  const effectiveLocationId = selectedLocationId || locations[0]?.id;
+  const firstLocationId = locations[0]?.id ?? "";
 
   // Check if Google Calendar is connected
   const { data: gcalConnected } = useQuery({
@@ -140,15 +163,40 @@ export default function CalendarPage() {
     Promise.all([p1, p2]).finally(() => setRefreshingAfterNavigate(false));
   }, [organization?.id, gcalConnected]);
 
-  const getSlotsForDayHour = (day: Date, hour: number): { id: string; source: SlotSource; summary: string; start: string; end: string }[] => {
+  // When GCal connected: single source is Google Calendar (filter by location_id from extended props).
+  // When not connected: single source is DB bookings (filter by location_id).
+  const getSlotsForDayHour = (day: Date, hour: number, locationId: string): { id: string; source: SlotSource; summary: string; start: string; end: string }[] => {
     const slots: { id: string; source: SlotSource; summary: string; start: string; end: string }[] = [];
-    const bookingStartTimestampsInSlot = new Set<number>();
-    const TIME_TOLERANCE_MS = 60 * 1000; // 1 minute: treat as same event if within this window
 
-    orgBookings.forEach((b: any) => {
+    if (gcalConnected && gcalEvents) {
+      // Google Calendar is the single source: show only GCal events for this location (location_id from extended props)
+      gcalEvents.forEach((e: any) => {
+        if (!e.start) return;
+        const eDate = new Date(e.start);
+        if (!isSameDay(eDate, day) || eDate.getHours() !== hour) return;
+        // Only show events that belong to this location (our synced events have location_id in extended props)
+        if (locationId && e.location_id != null && String(e.location_id) !== String(locationId)) return;
+        // If event has no location_id (e.g. external GCal event), show on first location tab only
+        if (locationId && (e.location_id == null || e.location_id === "") && firstLocationId && String(locationId) !== String(firstLocationId)) return;
+        slots.push({
+          id: e.id || `gcal-${e.start}`,
+          source: "gcal",
+          summary: e.summary || "Event",
+          start: e.start,
+          end: e.end || e.start,
+        });
+      });
+      return slots;
+    }
+
+    // No GCal: use custom (DB) bookings only, filtered by location
+    const bookingsForThisLocation =
+      locationId
+        ? orgBookings.filter((b: any) => String(b.location_id) === String(locationId))
+        : orgBookings;
+    bookingsForThisLocation.forEach((b: any) => {
       const start = new Date(b.start_time);
       if (isSameDay(start, day) && start.getHours() === hour) {
-        bookingStartTimestampsInSlot.add(new Date(b.start_time).getTime());
         const svc = b.services as { name?: string } | null;
         const staffName = (b.staff as { name?: string } | null)?.name;
         slots.push({
@@ -160,30 +208,6 @@ export default function CalendarPage() {
         });
       }
     });
-
-    // Only show GCal events that are NOT our synced bookings — never show duplicates
-    if (gcalConnected && gcalEvents) {
-      gcalEvents.forEach((e: any) => {
-        if (!e.start) return;
-        if (e.id && syncedGcalIds.has(String(e.id))) return;
-        const eDate = new Date(e.start);
-        if (!isSameDay(eDate, day) || eDate.getHours() !== hour) return;
-        const eTime = new Date(e.start).getTime();
-        // Hide if any booking in this slot is at the same time (within 1 min) — guarantees no duplicate
-        const overlapsBooking = [...bookingStartTimestampsInSlot].some(
-          (bt) => Math.abs(eTime - bt) < TIME_TOLERANCE_MS
-        );
-        if (overlapsBooking) return;
-        slots.push({
-          id: e.id || `gcal-${e.start}`,
-          source: "gcal",
-          summary: e.summary || "Event",
-          start: e.start,
-          end: e.end || e.start,
-        });
-      });
-    }
-
     return slots;
   };
 
@@ -251,70 +275,156 @@ export default function CalendarPage() {
         </div>
       </div>
 
-      {isLoading ? (
-        <div className="flex justify-center py-8">
-          <Loader2 className="h-6 w-6 animate-spin text-primary" />
-        </div>
-      ) : (
-        <div className="overflow-x-auto">
-          <div className="min-w-[800px]">
-            <div className="grid grid-cols-[60px_repeat(7,1fr)] border-b">
-              <div className="p-2" />
-              {weekDays.map((day) => (
-                <div
-                  key={day.toISOString()}
-                  className={`p-2 text-center border-l ${isSameDay(day, new Date()) ? "bg-primary/5" : ""}`}
-                >
-                  <p className="text-xs text-muted-foreground">{format(day, "EEE")}</p>
-                  <p className={`text-lg font-semibold ${isSameDay(day, new Date()) ? "text-primary" : ""}`}>
-                    {format(day, "d")}
-                  </p>
-                </div>
-              ))}
-            </div>
-
-            {HOURS.map((hour) => (
-              <div key={hour} className="grid grid-cols-[60px_repeat(7,1fr)] border-b min-h-[80px]">
-                <div className="p-1 text-xs text-muted-foreground text-right pr-2 pt-1">
-                  {format(setHours(new Date(), hour), "h a")}
-                </div>
-                {weekDays.map((day) => {
-                  const daySlots = getSlotsForDayHour(day, hour);
-                  const slotTime = setMinutes(setHours(startOfDay(day), hour), 0);
-                  const isPastSlot = isBefore(slotTime, new Date()); // past date or past time (hour)
-                  return (
-                    <div
-                      key={day.toISOString() + hour}
-                      role={isPastSlot ? undefined : "button"}
-                      tabIndex={isPastSlot ? undefined : 0}
-                      onClick={isPastSlot ? undefined : () => openAddBooking(day, hour)}
-                      onKeyDown={isPastSlot ? undefined : (e) => e.key === "Enter" && openAddBooking(day, hour)}
-                      className={`border-l p-1 text-left min-h-[80px] rounded-none ${isPastSlot ? "cursor-not-allowed opacity-75 bg-muted/30" : "cursor-pointer transition-colors hover:bg-primary/10 focus:outline-none focus:ring-1 focus:ring-ring focus:ring-inset"} ${isSameDay(day, new Date()) && !isPastSlot ? "bg-primary/5" : ""} ${isSameDay(day, new Date()) && isPastSlot ? "bg-muted/20" : ""}`}
-                    >
-                      {daySlots.map((s) => (
-                        <div
-                          key={getSlotKey(s)}
-                          className={`rounded-md border p-1.5 mb-1 text-xs shadow-sm truncate ${
-                            s.source === "booking"
-                              ? "bg-primary/10 border-primary/20"
-                              : "bg-muted border-border"
-                          }`}
-                          onClick={(e) => e.stopPropagation()}
-                        >
-                          <p className="font-medium truncate">{s.summary}</p>
-                          <p className="text-muted-foreground">
-                            {format(new Date(s.start), "h:mm a")}
-                            {s.end ? ` — ${format(new Date(s.end), "h:mm a")}` : ""}
-                          </p>
-                        </div>
-                      ))}
-                    </div>
-                  );
-                })}
-              </div>
+      {locations.length > 0 && (
+        <Tabs className="w-fit" value={effectiveLocationId || ""} onValueChange={setSelectedLocationId}>
+          <TabsList className="flex flex-wrap h-auto gap-1">
+            {locations.map((loc) => (
+              <TabsTrigger key={loc.id} value={loc.id} className="gap-1.5">
+                <MapPin className="h-3.5 w-3.5" />
+                {loc.name}
+              </TabsTrigger>
             ))}
-          </div>
-        </div>
+          </TabsList>
+        </Tabs>
+      )}
+
+      {locations.length > 0 && (
+        <>
+          {isLoading ? (
+            <div className="flex justify-center py-8">
+              <Loader2 className="h-6 w-6 animate-spin text-primary" />
+            </div>
+          ) : (
+            <div className="overflow-x-auto" key={effectiveLocationId}>
+              <div className="min-w-[800px]">
+                <div className="grid grid-cols-[60px_repeat(7,1fr)] border-b">
+                  <div className="p-2" />
+                  {weekDays.map((day) => (
+                    <div
+                      key={day.toISOString()}
+                      className={`p-2 text-center border-l ${isSameDay(day, new Date()) ? "bg-primary/5" : ""}`}
+                    >
+                      <p className="text-xs text-muted-foreground">{format(day, "EEE")}</p>
+                      <p className={`text-lg font-semibold ${isSameDay(day, new Date()) ? "text-primary" : ""}`}>
+                        {format(day, "d")}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+                {HOURS.map((hour) => (
+                  <div key={hour} className="grid grid-cols-[60px_repeat(7,1fr)] border-b min-h-[80px]">
+                    <div className="p-1 text-xs text-muted-foreground text-right pr-2 pt-1">
+                      {format(setHours(new Date(), hour), "h a")}
+                    </div>
+                    {weekDays.map((day) => {
+                      const daySlots = getSlotsForDayHour(day, hour, effectiveLocationId || "");
+                      const slotTime = setMinutes(setHours(startOfDay(day), hour), 0);
+                      const isPastSlot = isBefore(slotTime, new Date());
+                      return (
+                        <div
+                          key={day.toISOString() + hour}
+                          role={isPastSlot ? undefined : "button"}
+                          tabIndex={isPastSlot ? undefined : 0}
+                          onClick={isPastSlot ? undefined : () => openAddBooking(day, hour)}
+                          onKeyDown={isPastSlot ? undefined : (e) => e.key === "Enter" && openAddBooking(day, hour)}
+                          className={`border-l p-1 text-left min-h-[80px] rounded-none ${isPastSlot ? "cursor-not-allowed opacity-75 bg-muted/30" : "cursor-pointer transition-colors hover:bg-primary/10 focus:outline-none focus:ring-1 focus:ring-ring focus:ring-inset"} ${isSameDay(day, new Date()) && !isPastSlot ? "bg-primary/5" : ""} ${isSameDay(day, new Date()) && isPastSlot ? "bg-muted/20" : ""}`}
+                        >
+                          {daySlots.map((s) => (
+                            <div
+                              key={getSlotKey(s)}
+                              className={`rounded-md border p-1.5 mb-1 text-xs shadow-sm truncate ${
+                                s.source === "booking"
+                                  ? "bg-primary/10 border-primary/20"
+                                  : "bg-muted border-border"
+                              }`}
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              <p className="font-medium truncate">{s.summary}</p>
+                              <p className="text-muted-foreground">
+                                {format(new Date(s.start), "h:mm a")}
+                                {s.end ? ` — ${format(new Date(s.end), "h:mm a")}` : ""}
+                              </p>
+                            </div>
+                          ))}
+                        </div>
+                      );
+                    })}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </>
+      )}
+
+      {locations.length === 0 && (
+        <>
+          <p className="text-sm text-muted-foreground">Add locations in Locations to see the calendar by location.</p>
+          {isLoading ? (
+            <div className="flex justify-center py-8">
+              <Loader2 className="h-6 w-6 animate-spin text-primary" />
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <div className="min-w-[800px]">
+                <div className="grid grid-cols-[60px_repeat(7,1fr)] border-b">
+                  <div className="p-2" />
+                  {weekDays.map((day) => (
+                    <div
+                      key={day.toISOString()}
+                      className={`p-2 text-center border-l ${isSameDay(day, new Date()) ? "bg-primary/5" : ""}`}
+                    >
+                      <p className="text-xs text-muted-foreground">{format(day, "EEE")}</p>
+                      <p className={`text-lg font-semibold ${isSameDay(day, new Date()) ? "text-primary" : ""}`}>
+                        {format(day, "d")}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+                {HOURS.map((hour) => (
+                  <div key={hour} className="grid grid-cols-[60px_repeat(7,1fr)] border-b min-h-[80px]">
+                    <div className="p-1 text-xs text-muted-foreground text-right pr-2 pt-1">
+                      {format(setHours(new Date(), hour), "h a")}
+                    </div>
+                    {weekDays.map((day) => {
+                      const daySlots = getSlotsForDayHour(day, hour, "");
+                      const slotTime = setMinutes(setHours(startOfDay(day), hour), 0);
+                      const isPastSlot = isBefore(slotTime, new Date());
+                      return (
+                        <div
+                          key={day.toISOString() + hour}
+                          role={isPastSlot ? undefined : "button"}
+                          tabIndex={isPastSlot ? undefined : 0}
+                          onClick={isPastSlot ? undefined : () => openAddBooking(day, hour)}
+                          onKeyDown={isPastSlot ? undefined : (e) => e.key === "Enter" && openAddBooking(day, hour)}
+                          className={`border-l p-1 text-left min-h-[80px] rounded-none ${isPastSlot ? "cursor-not-allowed opacity-75 bg-muted/30" : "cursor-pointer transition-colors hover:bg-primary/10 focus:outline-none focus:ring-1 focus:ring-ring focus:ring-inset"} ${isSameDay(day, new Date()) && !isPastSlot ? "bg-primary/5" : ""} ${isSameDay(day, new Date()) && isPastSlot ? "bg-muted/20" : ""}`}
+                        >
+                          {daySlots.map((s) => (
+                            <div
+                              key={getSlotKey(s)}
+                              className={`rounded-md border p-1.5 mb-1 text-xs shadow-sm truncate ${
+                                s.source === "booking"
+                                  ? "bg-primary/10 border-primary/20"
+                                  : "bg-muted border-border"
+                              }`}
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              <p className="font-medium truncate">{s.summary}</p>
+                              <p className="text-muted-foreground">
+                                {format(new Date(s.start), "h:mm a")}
+                                {s.end ? ` — ${format(new Date(s.end), "h:mm a")}` : ""}
+                              </p>
+                            </div>
+                          ))}
+                        </div>
+                      );
+                    })}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </>
       )}
 
       <AddBookingDialog
@@ -324,8 +434,15 @@ export default function CalendarPage() {
         }}
         organizationId={organization?.id ?? ""}
         initialStart={slotStart}
-        onSuccess={() => {
+        defaultLocationId={selectedLocationId}
+        gcalConnected={!!gcalConnected}
+        onSuccess={(bookingId) => {
           queryClient.invalidateQueries({ queryKey: ["calendar-bookings"] });
+          if (bookingId && gcalConnected) {
+            supabase.functions.invoke("sync-booking-to-gcal", { body: { booking_id: bookingId } }).then(() => {
+              refetchGcal();
+            });
+          }
           closeAddBooking();
         }}
       />
@@ -338,7 +455,9 @@ type AddBookingDialogProps = {
   onOpenChange: (open: boolean) => void;
   organizationId: string;
   initialStart: Date | null;
-  onSuccess: () => void;
+  defaultLocationId?: string;
+  gcalConnected?: boolean;
+  onSuccess: (bookingId?: string) => void;
 };
 
 function AddBookingDialog({
@@ -346,6 +465,8 @@ function AddBookingDialog({
   onOpenChange,
   organizationId,
   initialStart,
+  defaultLocationId,
+  gcalConnected,
   onSuccess,
 }: AddBookingDialogProps) {
   const queryClient = useQueryClient();
@@ -373,6 +494,10 @@ function AddBookingDialog({
       setStartTime(format(next, "HH:mm"));
     }
   }, [open, initialStart]);
+
+  useEffect(() => {
+    if (open && defaultLocationId) setLocationId(defaultLocationId);
+  }, [open, defaultLocationId]);
 
   // When date is today, keep time from being in the past (enforce min time)
   useEffect(() => {
@@ -447,26 +572,32 @@ function AddBookingDialog({
       const duration = selectedService?.duration_minutes ?? 30;
       const end = new Date(start.getTime() + duration * 60000);
 
-      const { error } = await supabase.from("bookings").insert({
-        organization_id: organizationId,
-        location_id: locationId,
-        service_id: serviceId,
-        staff_id: (staffId && staffId !== "__any__") ? staffId : null,
-        customer_name: customerName.trim(),
-        customer_email: customerEmail.trim().toLowerCase(),
-        customer_phone: customerPhone.trim() || null,
-        start_time: start.toISOString(),
-        end_time: end.toISOString(),
-        status: "confirmed",
-        notes: notes.trim() || null,
-      });
+      const { data, error } = await supabase
+        .from("bookings")
+        .insert({
+          organization_id: organizationId,
+          location_id: locationId,
+          service_id: serviceId,
+          staff_id: (staffId && staffId !== "__any__") ? staffId : null,
+          customer_name: customerName.trim(),
+          customer_email: customerEmail.trim().toLowerCase(),
+          customer_phone: customerPhone.trim() || null,
+          start_time: start.toISOString(),
+          end_time: end.toISOString(),
+          status: "confirmed",
+          notes: notes.trim() || null,
+        })
+        .select("id")
+        .single();
       if (error) throw error;
+      return data?.id as string | undefined;
     },
-    onSuccess: () => {
+    onSuccess: (bookingId) => {
       queryClient.invalidateQueries({ queryKey: ["calendar-bookings"] });
       queryClient.invalidateQueries({ queryKey: ["all-bookings"] });
+      queryClient.invalidateQueries({ queryKey: ["gcal-events"] });
       toast({ title: "Booking created" });
-      onSuccess();
+      onSuccess(bookingId);
     },
     onError: (err: any) => {
       toast({ title: "Error", description: err?.message ?? "Failed to create booking", variant: "destructive" });
