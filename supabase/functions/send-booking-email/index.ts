@@ -30,21 +30,21 @@ serve(async (req) => {
     if (type === "confirm_booking") {
       const { token, customer_email, customer_name, org_name, formatted_date, formatted_time, service_summary, confirm_url } = confirm_booking || {};
       if (!token || !customer_email || !confirm_url) throw new Error("confirm_booking requires token, customer_email, confirm_url");
-      const subject = `Confirm your booking — ${org_name || "Your Salon"}`;
+      const subject = `Bevestig je reservering — ${org_name || "Je salon"}`;
       const html = `
         <div style="font-family: Arial, sans-serif; max-width: 500px; margin: 0 auto; padding: 24px;">
-          <h1 style="color: #3990f0; margin-bottom: 8px;">Confirm your booking</h1>
-          <p>Hi ${customer_name || "there"},</p>
-          <p>You requested an appointment. Please confirm it by clicking the button below.</p>
+          <h1 style="color: #3990f0; margin-bottom: 8px;">Bevestig je reservering</h1>
+          <p>Hallo ${customer_name || "beste klant"},</p>
+          <p>Je hebt een afspraak aangevraagd. Bevestig deze door op de onderstaande knop te klikken.</p>
           ${formatted_date && formatted_time ? `<div style="background: #f9fafb; border-radius: 8px; padding: 16px; margin: 16px 0;">
-            <p style="margin: 4px 0;"><strong>📅 Date:</strong> ${formatted_date}</p>
-            <p style="margin: 4px 0;"><strong>🕐 Time:</strong> ${formatted_time}</p>
-            ${service_summary ? `<p style="margin: 4px 0;"><strong>✂️ Services:</strong> ${service_summary}</p>` : ""}
+            <p style="margin: 4px 0;"><strong>📅 Datum:</strong> ${formatted_date}</p>
+            <p style="margin: 4px 0;"><strong>🕐 Tijd:</strong> ${formatted_time}</p>
+            ${service_summary ? `<p style="margin: 4px 0;"><strong>✂️ Diensten:</strong> ${service_summary}</p>` : ""}
           </div>` : ""}
           <p style="margin: 24px 0;">
-            <a href="${confirm_url}" style="display: inline-block; background: #3990f0; color: white; padding: 12px 24px; text-decoration: none; border-radius: 8px; font-weight: bold;">Confirm booking</a>
+            <a href="${confirm_url}" style="display: inline-block; background: #3990f0; color: white; padding: 12px 24px; text-decoration: none; border-radius: 8px; font-weight: bold;">Reservering bevestigen</a>
           </p>
-          <p style="color: #6b7280; font-size: 14px;">This link expires in 24 hours. If you didn't request this, you can ignore this email.</p>
+          <p style="color: #6b7280; font-size: 14px;">Deze link verloopt over 24 uur. Als je dit niet hebt aangevraagd, kun je deze e-mail negeren.</p>
         </div>
       `;
       const fromEmail = Deno.env.get("RESEND_FROM_EMAIL") || "noreply@booking.salonora.eu";
@@ -78,34 +78,34 @@ serve(async (req) => {
     const currencySymbols: Record<string, string> = { usd: "$", eur: "€", gbp: "£", cad: "C$", aud: "A$", jpy: "¥", inr: "₹", brl: "R$" };
     const symbol = currencySymbols[service?.currency || "eur"] || "€";
 
-    const formattedDate = startTime.toLocaleDateString("en-US", { weekday: "long", year: "numeric", month: "long", day: "numeric" });
-    const formattedTime = startTime.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+    const formattedDate = startTime.toLocaleDateString("nl-NL", { weekday: "long", year: "numeric", month: "long", day: "numeric" });
+    const formattedTime = startTime.toLocaleTimeString("nl-NL", { hour: "numeric", minute: "2-digit" });
 
     let subject = "";
     let heading = "";
 
     if (type === "confirmation") {
-      subject = `Booking Confirmed — ${org?.name || "Your Salon"}`;
-      heading = "Your Booking is Confirmed!";
+      subject = `Reservering bevestigd — ${org?.name || "Je salon"}`;
+      heading = "Je reservering is bevestigd!";
     } else if (type === "reminder") {
-      subject = `Reminder: Upcoming Appointment — ${org?.name || "Your Salon"}`;
-      heading = "Appointment Reminder";
+      subject = `Herinnering: komende afspraak — ${org?.name || "Je salon"}`;
+      heading = "Afspraakherinnering";
     }
 
     const html = `
       <div style="font-family: Arial, sans-serif; max-width: 500px; margin: 0 auto; padding: 24px;">
         <h1 style="color: #3990f0; margin-bottom: 8px;">${heading}</h1>
-        <p>Hi ${booking.customer_name},</p>
+        <p>Hallo ${booking.customer_name},</p>
         <div style="background: #f9fafb; border-radius: 8px; padding: 16px; margin: 16px 0;">
-          <p style="margin: 4px 0;"><strong>📅 Date:</strong> ${formattedDate}</p>
-          <p style="margin: 4px 0;"><strong>🕐 Time:</strong> ${formattedTime}</p>
-          <p style="margin: 4px 0;"><strong>✂️ Service:</strong> ${service?.name} (${service?.duration_minutes} min)</p>
-          <p style="margin: 4px 0;"><strong>💰 Price:</strong> ${symbol}${Number(service?.price || 0).toFixed(2)}</p>
-          <p style="margin: 4px 0;"><strong>👤 Staff:</strong> ${staff?.name || "TBD"}</p>
-          <p style="margin: 4px 0;"><strong>📍 Location:</strong> ${location?.name || ""}${location?.address ? ` — ${location.address}` : ""}</p>
+          <p style="margin: 4px 0;"><strong>📅 Datum:</strong> ${formattedDate}</p>
+          <p style="margin: 4px 0;"><strong>🕐 Tijd:</strong> ${formattedTime}</p>
+          <p style="margin: 4px 0;"><strong>✂️ Behandeling:</strong> ${service?.name} (${service?.duration_minutes} min)</p>
+          <p style="margin: 4px 0;"><strong>💰 Prijs:</strong> ${symbol}${Number(service?.price || 0).toFixed(2)}</p>
+          <p style="margin: 4px 0;"><strong>👤 Medewerker:</strong> ${staff?.name || "Nog niet bekend"}</p>
+          <p style="margin: 4px 0;"><strong>📍 Locatie:</strong> ${location?.name || ""}${location?.address ? ` — ${location.address}` : ""}</p>
         </div>
-        <p style="color: #6b7280; font-size: 14px;">If you need to cancel or reschedule, please contact us directly.</p>
-        <p style="color: #6b7280; font-size: 14px;">Thank you for choosing ${org?.name || "us"}!</p>
+        <p style="color: #6b7280; font-size: 14px;">Als je moet annuleren of verzetten, neem dan rechtstreeks contact met ons op.</p>
+        <p style="color: #6b7280; font-size: 14px;">Bedankt dat je voor ${org?.name || "ons"} hebt gekozen!</p>
       </div>
     `;
 

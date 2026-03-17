@@ -23,23 +23,23 @@ serve(async (req) => {
     if (!email) throw new Error("email is required");
 
     const appUrl = Deno.env.get("APP_URL") || "";
-    const loginUrl = appUrl ? `${appUrl.replace(/\/$/, "")}` : "the login page";
-    const name = full_name || "there";
+    const loginUrl = appUrl ? `${appUrl.replace(/\/$/, "")}` : "de inlogpagina";
+    const name = full_name || "beste klant";
 
     const html = `
       <div style="font-family: Arial, sans-serif; max-width: 500px; margin: 0 auto; padding: 24px;">
-        <h1 style="color: #3990f0;">Your account has been approved</h1>
-        <p>Hi ${name},</p>
-        <p>An admin has approved your account. You can now sign in and use the platform.</p>
-        ${appUrl ? `<p><a href="${loginUrl}" style="color: #3990f0;">Sign in</a></p>` : "<p>Please go to the app and sign in with your email and password.</p>"}
-        <p style="color: #6b7280; font-size: 14px;">Thank you!</p>
+        <h1 style="color: #3990f0;">Je account is goedgekeurd</h1>
+        <p>Hallo ${name},</p>
+        <p>Een beheerder heeft je account goedgekeurd. Je kunt nu inloggen en het platform gebruiken.</p>
+        ${appUrl ? `<p><a href="${loginUrl}" style="color: #3990f0;">Inloggen</a></p>` : "<p>Ga naar de app en log in met je e-mailadres en wachtwoord.</p>"}
+        <p style="color: #6b7280; font-size: 14px;">Bedankt!</p>
       </div>
     `;
 
     await resend.emails.send({
       from: `${fromName} <${fromEmail}>`,
       to: [email],
-      subject: "Your account has been approved",
+      subject: "Je account is goedgekeurd",
       html,
     });
 

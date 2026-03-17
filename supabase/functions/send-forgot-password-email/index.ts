@@ -27,18 +27,18 @@ serve(async (req) => {
 
     const html = `
       <div style="font-family: Arial, sans-serif; max-width: 500px; margin: 0 auto; padding: 24px;">
-        <h1 style="color: #3990f0;">Reset your password</h1>
-        <p>We received a request to reset the password for your Salonora account.</p>
-        <p>Click the link below to set a new password. This link will expire in 1 hour.</p>
-        ${resetUrl ? `<p><a href="${resetUrl}" style="display: inline-block; background: #3990f0; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px;">Set new password</a></p>` : ""}
-        <p style="color: #6b7280; font-size: 14px;">If you didn't request this, you can safely ignore this email.</p>
+        <h1 style="color: #3990f0;">Stel je wachtwoord opnieuw in</h1>
+        <p>We hebben een verzoek ontvangen om het wachtwoord van je Salonora-account opnieuw in te stellen.</p>
+        <p>Klik op de onderstaande link om een nieuw wachtwoord in te stellen. Deze link verloopt over 1 uur.</p>
+        ${resetUrl ? `<p><a href="${resetUrl}" style="display: inline-block; background: #3990f0; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px;">Nieuw wachtwoord instellen</a></p>` : ""}
+        <p style="color: #6b7280; font-size: 14px;">Als je dit niet hebt aangevraagd, kun je deze e-mail gerust negeren.</p>
       </div>
     `;
 
     const { data, error } = await resend.emails.send({
       from: `${fromName} <${fromEmail}>`,
       to: [email],
-      subject: "Reset your Salonora password",
+      subject: "Stel je Salonora-wachtwoord opnieuw in",
       html,
     });
 

@@ -53,6 +53,35 @@ import { DEFAULT_EMBED_THEME, hexToHsl, hexToHslWithAlpha, hexToRgba, getContras
 import type { EmbedTheme } from "@/types/embedTheme";
 import { getHolidayDatesForYears, getHolidaysWithNames } from "@/lib/holidays";
 
+/** Minutes of buffer required between consecutive bookings; next slot can only start after this after the previous end. */
+const BOOKING_SLOT_BUFFER_MINUTES = 15;
+
+/** Subtract closure time windows from availability windows; returns list of open intervals (each { start_time, end_time } as HH:mm). */
+function subtractClosureWindows(
+  windows: { start_time: string; end_time: string }[],
+  closures: { start_time: string; end_time: string }[]
+): { start_time: string; end_time: string }[] {
+  let result = windows.map((w) => ({
+    start_time: w.start_time.slice(0, 5),
+    end_time: w.end_time.slice(0, 5),
+  }));
+  for (const c of closures) {
+    const cStart = c.start_time.slice(0, 5);
+    const cEnd = c.end_time.slice(0, 5);
+    const next: { start_time: string; end_time: string }[] = [];
+    for (const r of result) {
+      if (cEnd <= r.start_time || cStart >= r.end_time) {
+        next.push(r);
+        continue;
+      }
+      if (r.start_time < cStart) next.push({ start_time: r.start_time, end_time: cStart });
+      if (cEnd < r.end_time) next.push({ start_time: cEnd, end_time: r.end_time });
+    }
+    result = next;
+  }
+  return result;
+}
+
 type Step = "location" | "service" | "time" | "details" | "confirmed" | "confirm_email_sent";
 
 export default function BookingPage() {
@@ -132,22 +161,34 @@ export default function BookingPage() {
     queryFn: async () => {
       const { data, error } = await supabase
         .from("organization_off_days")
-        .select("date, reason")
+        .select("date, reason, location_id")
         .eq("organization_id", org!.id);
       if (error) throw error;
       return (data ?? []).map((r) => ({
         date: (r.date as string).slice(0, 10),
         reason: (r as { reason?: string | null }).reason ?? null,
+        location_id: (r as { location_id?: string | null }).location_id ?? null,
       }));
     },
     enabled: !!org?.id,
   });
 
-  const offDaysSet = useMemo(() => new Set(offDaysList.map((o) => o.date)), [offDaysList]);
-  const offDayReasonMap = useMemo(
-    () => new Map(offDaysList.map((o) => [o.date, o.reason?.trim() || "Closed"])),
-    [offDaysList]
-  );
+  // Off days that apply to the selected location: org-wide (location_id null) or this location
+  const offDaysSet = useMemo(() => {
+    const set = new Set<string>();
+    offDaysList.forEach((o) => {
+      if (o.location_id === null || o.location_id === selectedLocation) set.add(o.date);
+    });
+    return set;
+  }, [offDaysList, selectedLocation]);
+  const offDayReasonMap = useMemo(() => {
+    const m = new Map<string, string>();
+    offDaysList.forEach((o) => {
+      if (o.location_id === null || o.location_id === selectedLocation)
+        m.set(o.date, o.reason?.trim() || "Closed");
+    });
+    return m;
+  }, [offDaysList, selectedLocation]);
   const holidayWorkingOverrideSet = useMemo(
     () => new Set(holidayOverrides.filter((o) => o.is_working_day).map((o) => o.date)),
     [holidayOverrides]
@@ -315,6 +356,22 @@ export default function BookingPage() {
 
       if (!avail || avail.length === 0) return [];
 
+      const { data: closureRows = [] } = await supabase
+        .from("location_closure_slots")
+        .select("start_time, end_time")
+        .eq("organization_id", org!.id)
+        .eq("date", dateStr)
+        .or(`location_id.is.null,location_id.eq.${selectedLocation}`);
+      const closures = closureRows.map((r) => ({
+        start_time: (r.start_time as string).slice(0, 5),
+        end_time: (r.end_time as string).slice(0, 5),
+      }));
+      const openWindows = subtractClosureWindows(
+        avail.map((a) => ({ start_time: a.start_time, end_time: a.end_time })),
+        closures
+      );
+      if (openWindows.length === 0) return [];
+
       const dayStart = new Date(selectedDate + "T00:00:00").toISOString();
       const dayEnd = new Date(selectedDate + "T23:59:59").toISOString();
 
@@ -356,9 +413,9 @@ export default function BookingPage() {
       const duration = totalDuration || 30;
       const slots: { time: string; available: boolean }[] = [];
 
-      for (const a of avail) {
-        const [sh, sm] = (a.start_time as string).split(":").map(Number);
-        const [eh, em] = (a.end_time as string).split(":").map(Number);
+      for (const a of openWindows) {
+        const [sh, sm] = a.start_time.split(":").map(Number);
+        const [eh, em] = a.end_time.split(":").map(Number);
         let current = setMinutes(
           setHours(new Date(selectedDate + "T00:00:00"), sh),
           sm,
@@ -378,12 +435,14 @@ export default function BookingPage() {
           const bookingConflict = existing?.some((b) => {
             const bs = new Date(b.start_time);
             const be = new Date(b.end_time);
-            return isBefore(current, be) && isAfter(slotEnd, bs);
+            const beWithBuffer = addMinutes(be, BOOKING_SLOT_BUFFER_MINUTES);
+            return isBefore(current, beWithBuffer) && isAfter(slotEnd, bs);
           });
           const gcalConflict = gcalEvents.some((e) => {
             const es = new Date(e.start);
             const ee = new Date(e.end);
-            return isBefore(current, ee) && isAfter(slotEnd, es);
+            const eeWithBuffer = addMinutes(ee, BOOKING_SLOT_BUFFER_MINUTES);
+            return isBefore(current, eeWithBuffer) && isAfter(slotEnd, es);
           });
           if (!isPast) {
             slots.push({
@@ -391,7 +450,7 @@ export default function BookingPage() {
               available: !bookingConflict && !gcalConflict,
             });
           }
-          current = addMinutes(current, 30);
+          current = addMinutes(current, duration + BOOKING_SLOT_BUFFER_MINUTES);
         }
       }
       return slots;
@@ -420,6 +479,13 @@ export default function BookingPage() {
       toast({ title: "Phone required", description: "Please enter your phone number.", variant: "destructive" });
       return;
     }
+    const first = (customerFirstName || ((form.get("firstName") as string)?.trim() ?? "")).trim();
+    const last = (customerLastName || ((form.get("lastName") as string)?.trim() ?? "")).trim();
+    const fullName = [first, last].filter(Boolean).join(" ").trim();
+    if (!fullName) {
+      toast({ title: "Name required", description: "Please enter your first and last name.", variant: "destructive" });
+      return;
+    }
     setBooking(true);
     const [h, m] = selectedTime.split(":").map(Number);
     const startTime = setMinutes(
@@ -436,7 +502,7 @@ export default function BookingPage() {
             location_id: selectedLocation,
             ...(selectedStaff ? { staff_id: selectedStaff } : {}),
             service_ids: selectedServices,
-            customer_name: `${(customerFirstName || ((form.get("firstName") as string)?.trim() ?? "")).trim()} ${(customerLastName || ((form.get("lastName") as string)?.trim() ?? "")).trim()}`.trim(),
+            customer_name: fullName,
             customer_email: (customerEmail || ((form.get("email") as string)?.trim() ?? "")).trim() || "",
             customer_phone: phone,
             start_time: startTime.toISOString(),

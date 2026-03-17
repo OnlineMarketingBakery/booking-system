@@ -69,16 +69,29 @@ serve(async (req) => {
 
     const orgId = payload.organization_id as string;
     const email = (payload.customer_email as string).trim().toLowerCase();
+    const nameVal = typeof payload.customer_name === "string"
+      ? payload.customer_name.trim()
+      : (typeof (payload as Record<string, unknown>).customerName === "string"
+        ? ((payload as Record<string, unknown>).customerName as string).trim()
+        : "");
+    const phoneVal = typeof payload.customer_phone === "string"
+      ? payload.customer_phone.trim()
+      : (typeof (payload as Record<string, unknown>).customerPhone === "string"
+        ? ((payload as Record<string, unknown>).customerPhone as string).trim()
+        : "");
+
+    const upsertRow: Record<string, unknown> = {
+      organization_id: orgId,
+      customer_email: email,
+      has_confirmed_once: true,
+      updated_at: new Date().toISOString(),
+    };
+    // Always persist name and phone from this booking (so we have contact info). Only add when we have a value so we never overwrite with null.
+    if (nameVal) upsertRow.customer_name = nameVal;
+    if (phoneVal) upsertRow.customer_phone = phoneVal;
 
     await supabase.from("confirmed_booking_customers").upsert(
-      {
-        organization_id: orgId,
-        customer_email: email,
-        customer_name: save_my_info ? (payload.customer_name as string)?.trim() ?? null : null,
-        customer_phone: save_my_info ? (payload.customer_phone as string)?.trim() || null : null,
-        has_confirmed_once: true,
-        updated_at: new Date().toISOString(),
-      },
+      upsertRow as { organization_id: string; customer_email: string; customer_name?: string | null; customer_phone?: string | null; has_confirmed_once: boolean; updated_at: string },
       { onConflict: "organization_id,customer_email" }
     );
 

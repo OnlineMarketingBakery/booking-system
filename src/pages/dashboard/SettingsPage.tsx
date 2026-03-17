@@ -176,6 +176,7 @@ export default function SettingsPage() {
         .from("google_calendar_tokens")
         .select("id")
         .eq("user_id", user!.id)
+        .is("disconnected_at", null)
         .maybeSingle();
       return !!data;
     },
@@ -264,6 +265,8 @@ export default function SettingsPage() {
       toast({ title: "Disconnect failed", description: error.message, variant: "destructive" });
       return;
     }
+    queryClient.invalidateQueries({ queryKey: ["gcal-connected"] });
+    queryClient.invalidateQueries({ queryKey: ["gcal-connected-settings"] });
     refetch();
     const transferred = (data as { transferred?: number })?.transferred ?? 0;
     toast({

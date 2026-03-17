@@ -3,7 +3,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useOrganization } from "@/hooks/useOrganization";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Loader2, Mail, Phone, Calendar, Bell, Send } from "lucide-react";
+import { Loader2, Mail, Phone, Calendar, Bell, Send, Pencil, Trash2 } from "lucide-react";
 import { format } from "date-fns";
 import { useState } from "react";
 import {
@@ -32,16 +32,35 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 
 interface CustomerRecord {
+  id: string;
   customer_name: string;
   customer_email: string;
   customer_phone: string | null;
   total_bookings: number;
   last_booking: string;
   statuses: string[];
+}
+
+function parseCustomerName(full: string): { firstName: string; lastName: string } {
+  const parts = (full || "").trim().split(/\s+/);
+  return { firstName: parts[0] ?? "", lastName: parts.slice(1).join(" ") ?? "" };
+}
+function fullNameFromParts(first: string, last: string): string {
+  return [first.trim(), last.trim()].filter(Boolean).join(" ").trim() || "";
 }
 
 const DEFAULT_EMAIL_SUBJECT = "A message from us";
@@ -61,36 +80,69 @@ export default function Customers() {
   const [sendEmailOpen, setSendEmailOpen] = useState(false);
   const [emailSubject, setEmailSubject] = useState(DEFAULT_EMAIL_SUBJECT);
   const [emailMessage, setEmailMessage] = useState(DEFAULT_EMAIL_MESSAGE);
+  const [editDialogOpen, setEditDialogOpen] = useState(false);
+  const [editFirstName, setEditFirstName] = useState("");
+  const [editLastName, setEditLastName] = useState("");
+  const [editEmail, setEditEmail] = useState("");
+  const [editPhone, setEditPhone] = useState("");
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
 
   const { data: customers = [], isLoading } = useQuery({
     queryKey: ["customers", organization?.id],
     queryFn: async () => {
-      const { data, error } = await supabase
-        .from("bookings")
-        .select("customer_name, customer_email, customer_phone, start_time, status")
-        .eq("organization_id", organization!.id)
-        .order("start_time", { ascending: false });
-      if (error) throw error;
+      const orgId = organization!.id;
+      const { data: customerRows, error: custErr } = await supabase
+        .from("confirmed_booking_customers")
+        .select("id, customer_name, customer_email, customer_phone, updated_at")
+        .eq("organization_id", orgId);
+      if (custErr) throw custErr;
 
-      // Group by email
-      const map = new Map<string, CustomerRecord>();
-      for (const b of data) {
-        const existing = map.get(b.customer_email);
+      const { data: bookingRows, error: bookErr } = await supabase
+        .from("bookings")
+        .select("customer_email, start_time, status")
+        .eq("organization_id", orgId)
+        .order("start_time", { ascending: false });
+      if (bookErr) throw bookErr;
+
+      const byEmail = new Map<string, { total_bookings: number; last_booking: string; statuses: string[] }>();
+      for (const b of bookingRows || []) {
+        const email = (b.customer_email || "").trim().toLowerCase();
+        if (!email) continue;
+        const existing = byEmail.get(email);
         if (existing) {
           existing.total_bookings++;
           if (!existing.statuses.includes(b.status)) existing.statuses.push(b.status);
         } else {
-          map.set(b.customer_email, {
-            customer_name: b.customer_name,
-            customer_email: b.customer_email,
-            customer_phone: b.customer_phone,
+          byEmail.set(email, {
             total_bookings: 1,
             last_booking: b.start_time,
             statuses: [b.status],
           });
         }
       }
-      return Array.from(map.values());
+
+      const list: CustomerRecord[] = (customerRows || []).map((row) => {
+        const email = (row.customer_email || "").trim().toLowerCase();
+        const stats = byEmail.get(email);
+        return {
+          id: row.id,
+          customer_name: row.customer_name || "",
+          customer_email: row.customer_email || "",
+          customer_phone: row.customer_phone ?? null,
+          total_bookings: stats?.total_bookings ?? 0,
+          last_booking: stats?.last_booking ?? row.updated_at,
+          statuses: stats?.statuses ?? [],
+        };
+      });
+      list.sort((a, b) => {
+        const tA = new Date(a.last_booking).getTime();
+        const tB = new Date(b.last_booking).getTime();
+        if (!Number.isFinite(tA) && !Number.isFinite(tB)) return 0;
+        if (!Number.isFinite(tA)) return 1;
+        if (!Number.isFinite(tB)) return -1;
+        return tB - tA;
+      });
+      return list;
     },
     enabled: !!organization,
   });
@@ -163,6 +215,88 @@ export default function Customers() {
     onError: (e) => toast({ title: "Failed to send email", description: (e as Error).message, variant: "destructive" }),
   });
 
+  const openEditDialog = () => {
+    if (!selectedCustomer) return;
+    const { firstName, lastName } = parseCustomerName(selectedCustomer.customer_name);
+    setEditFirstName(firstName);
+    setEditLastName(lastName);
+    setEditEmail(selectedCustomer.customer_email);
+    setEditPhone(selectedCustomer.customer_phone ?? "");
+    setEditDialogOpen(true);
+  };
+
+  const updateCustomer = useMutation({
+    mutationFn: async () => {
+      if (!organization || !selectedCustomer) throw new Error("No customer selected");
+      const oldEmail = selectedCustomer.customer_email.trim().toLowerCase();
+      const newEmail = editEmail.trim();
+      const newEmailLower = newEmail.toLowerCase();
+      const { error: updateErr } = await supabase
+        .from("confirmed_booking_customers")
+        .update({
+          customer_name: fullNameFromParts(editFirstName, editLastName) || null,
+          customer_email: newEmail,
+          customer_phone: editPhone.trim() || null,
+        })
+        .eq("id", selectedCustomer.id);
+      if (updateErr) throw updateErr;
+      if (oldEmail !== newEmailLower) {
+        const { data: prefs } = await supabase
+          .from("customer_reminder_preferences")
+          .select("email_reminder_day_before, email_reminder_hour_before")
+          .eq("organization_id", organization.id)
+          .eq("customer_email", selectedCustomer.customer_email)
+          .maybeSingle();
+        await supabase
+          .from("customer_reminder_preferences")
+          .delete()
+          .eq("organization_id", organization.id)
+          .eq("customer_email", selectedCustomer.customer_email);
+        if (prefs) {
+          await supabase.from("customer_reminder_preferences").upsert(
+            {
+              organization_id: organization.id,
+              customer_email: newEmail,
+              ...prefs,
+            },
+            { onConflict: "organization_id,customer_email" }
+          );
+        }
+      }
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["customers"] });
+      queryClient.invalidateQueries({ queryKey: ["customer-reminder-prefs"] });
+      setEditDialogOpen(false);
+      setSelectedCustomer(null);
+      toast({ title: "Customer updated" });
+    },
+    onError: (e) => toast({ title: "Error", description: (e as Error).message, variant: "destructive" }),
+  });
+
+  const deleteCustomer = useMutation({
+    mutationFn: async () => {
+      if (!organization || !selectedCustomer) throw new Error("No customer selected");
+      await supabase
+        .from("customer_reminder_preferences")
+        .delete()
+        .eq("organization_id", organization.id)
+        .eq("customer_email", selectedCustomer.customer_email);
+      const { error } = await supabase
+        .from("confirmed_booking_customers")
+        .delete()
+        .eq("id", selectedCustomer.id);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["customers"] });
+      setDeleteConfirmOpen(false);
+      setSelectedCustomer(null);
+      toast({ title: "Customer removed" });
+    },
+    onError: (e) => toast({ title: "Error", description: (e as Error).message, variant: "destructive" }),
+  });
+
   return (
     <div className="space-y-6">
       <div>
@@ -212,7 +346,9 @@ export default function Customers() {
                     <TableCell>
                       <span className="flex items-center gap-1 text-sm text-muted-foreground">
                         <Calendar className="h-3 w-3" />
-                        {format(new Date(c.last_booking), "MMM d, yyyy")}
+                        {c.last_booking && !Number.isNaN(new Date(c.last_booking).getTime())
+                          ? format(new Date(c.last_booking), "MMM d, yyyy")
+                          : "—"}
                       </span>
                     </TableCell>
                   </TableRow>
@@ -232,10 +368,24 @@ export default function Customers() {
                 <SheetDescription>Customer details and reminder settings</SheetDescription>
               </SheetHeader>
               <div className="mt-6 space-y-6">
-                <div className="flex gap-2">
+                <div className="flex flex-wrap gap-2">
                   <Button type="button" variant="outline" size="sm" className="gap-2" onClick={openSendEmail}>
                     <Send className="h-4 w-4" />
                     Send email
+                  </Button>
+                  <Button type="button" variant="outline" size="sm" className="gap-2" onClick={openEditDialog}>
+                    <Pencil className="h-4 w-4" />
+                    Edit customer
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="gap-2 text-destructive hover:text-destructive hover:bg-destructive/10"
+                    onClick={() => setDeleteConfirmOpen(true)}
+                  >
+                    <Trash2 className="h-4 w-4" />
+                    Delete customer
                   </Button>
                 </div>
                 <div>
@@ -253,7 +403,7 @@ export default function Customers() {
                     )}
                     <div className="flex items-center gap-2 pt-2">
                       <Calendar className="h-4 w-4 text-muted-foreground" />
-                      <span>{selectedCustomer.total_bookings} booking(s) · Last visit {format(new Date(selectedCustomer.last_booking), "MMM d, yyyy")}</span>
+                      <span>{selectedCustomer.total_bookings} booking(s) · Last visit {selectedCustomer.last_booking && !Number.isNaN(new Date(selectedCustomer.last_booking).getTime()) ? format(new Date(selectedCustomer.last_booking), "MMM d, yyyy") : "—"}</span>
                     </div>
                   </div>
                 </div>
@@ -344,6 +494,87 @@ export default function Customers() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <Dialog open={editDialogOpen} onOpenChange={setEditDialogOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Edit customer</DialogTitle>
+            <DialogDescription>Update name, email, or phone. Changing email updates reminder preferences only; past bookings keep the original email.</DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-4 py-4">
+            <div className="grid grid-cols-2 gap-4">
+              <div className="grid gap-2">
+                <Label htmlFor="edit-first-name">First name</Label>
+                <Input
+                  id="edit-first-name"
+                  value={editFirstName}
+                  onChange={(e) => setEditFirstName(e.target.value)}
+                  placeholder="First name"
+                />
+              </div>
+              <div className="grid gap-2">
+                <Label htmlFor="edit-last-name">Last name</Label>
+                <Input
+                  id="edit-last-name"
+                  value={editLastName}
+                  onChange={(e) => setEditLastName(e.target.value)}
+                  placeholder="Last name"
+                />
+              </div>
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="edit-email">Email</Label>
+              <Input
+                id="edit-email"
+                type="email"
+                value={editEmail}
+                onChange={(e) => setEditEmail(e.target.value)}
+                placeholder="Email address"
+              />
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="edit-phone">Phone</Label>
+              <Input
+                id="edit-phone"
+                value={editPhone}
+                onChange={(e) => setEditPhone(e.target.value)}
+                placeholder="Phone (optional)"
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setEditDialogOpen(false)}>
+              Cancel
+            </Button>
+            <Button type="button" onClick={() => updateCustomer.mutate()} disabled={updateCustomer.isPending}>
+              {updateCustomer.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              Save changes
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <AlertDialog open={deleteConfirmOpen} onOpenChange={(open) => !deleteCustomer.isPending && setDeleteConfirmOpen(open)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete this customer?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This will remove the customer from your list and their reminder preferences. Past bookings are not deleted and will still show their contact details.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleteCustomer.isPending}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => deleteCustomer.mutate()}
+              disabled={deleteCustomer.isPending}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {deleteCustomer.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

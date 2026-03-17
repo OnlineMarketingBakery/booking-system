@@ -13,14 +13,14 @@ const corsHeaders = {
     "authorization, x-client-info, apikey, content-type",
 };
 
-const DEFAULT_SUBJECT = "A message from us";
-const DEFAULT_MESSAGE = `Hi there,
+const DEFAULT_SUBJECT = "Een bericht van ons";
+const DEFAULT_MESSAGE = `Hallo,
 
-We wanted to reach out and thank you for being a valued customer.
+We willen je bedanken dat je een gewaardeerde klant bent.
 
-If you have any questions or would like to book another appointment, please don't hesitate to contact us.
+Als je vragen hebt of een nieuwe afspraak wilt maken, neem dan gerust contact met ons op.
 
-Best regards`;
+Met vriendelijke groet`;
 
 serve(async (req) => {
   if (req.method === "OPTIONS") {
@@ -68,15 +68,15 @@ serve(async (req) => {
     const resend = new Resend(resendKey);
     const fromEmail = Deno.env.get("RESEND_FROM_EMAIL") || "noreply@booking.salonora.eu";
 
-    const subj = (subject && String(subject).trim()) || DEFAULT_SUBJECT.replace("us", org.name || "us");
+    const subj = (subject && String(subject).trim()) || DEFAULT_SUBJECT.replace("ons", org.name || "ons");
     const msg = (message && String(message).trim()) || DEFAULT_MESSAGE;
-    const name = (customer_name && String(customer_name).trim()) || "there";
+    const name = (customer_name && String(customer_name).trim()) || "beste klant";
     const html = `
       <div style="font-family: Arial, sans-serif; max-width: 500px; margin: 0 auto; padding: 24px;">
         <h1 style="color: #3990f0; margin-bottom: 8px;">${subj}</h1>
-        <p>Hi ${name},</p>
+        <p>Hallo ${name},</p>
         <div style="background: #f9fafb; border-radius: 8px; padding: 16px; margin: 16px 0; white-space: pre-wrap;">${msg.replace(/\n/g, "<br>")}</div>
-        <p style="color: #6b7280; font-size: 14px;">Best regards,<br>${org.name || "The team"}</p>
+        <p style="color: #6b7280; font-size: 14px;">Met vriendelijke groet,<br>${org.name || "Het team"}</p>
       </div>
     `;
 

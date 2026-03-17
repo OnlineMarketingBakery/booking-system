@@ -41,22 +41,22 @@ serve(async (req) => {
 
     const html = `
       <div style="font-family: Arial, sans-serif; max-width: 500px; margin: 0 auto; padding: 24px;">
-        <h1 style="color: #3990f0;">New sign-up request</h1>
-        <p>A user has requested an account and is waiting for approval.</p>
+        <h1 style="color: #3990f0;">Nieuwe aanmeldingsaanvraag</h1>
+        <p>Een gebruiker heeft een account aangevraagd en wacht op goedkeuring.</p>
         <div style="background: #f9fafb; border-radius: 8px; padding: 16px; margin: 16px 0;">
-          <p style="margin: 4px 0;"><strong>Name:</strong> ${full_name || "—"}</p>
-          <p style="margin: 4px 0;"><strong>Email:</strong> ${email}</p>
-          <p style="margin: 4px 0;"><strong>User ID:</strong> ${user_id || "—"}</p>
+          <p style="margin: 4px 0;"><strong>Naam:</strong> ${full_name || "—"}</p>
+          <p style="margin: 4px 0;"><strong>E-mail:</strong> ${email}</p>
+          <p style="margin: 4px 0;"><strong>Gebruikers-ID:</strong> ${user_id || "—"}</p>
         </div>
-        <p>Go to the admin dashboard to approve or reject this request.</p>
-        <p><a href="${dashboardUrl}" style="color: #3990f0;">Open dashboard</a></p>
+        <p>Ga naar het beheerdersdashboard om deze aanvraag goed te keuren of af te wijzen.</p>
+        <p><a href="${dashboardUrl}" style="color: #3990f0;">Dashboard openen</a></p>
       </div>
     `;
 
     await resend.emails.send({
       from: `${fromName} <${fromEmail}>`,
       to: [adminEmail],
-      subject: "New sign-up request — approval needed",
+      subject: "Nieuwe aanmeldingsaanvraag — goedkeuring vereist",
       html,
     });
 

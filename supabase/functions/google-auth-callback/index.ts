@@ -92,18 +92,27 @@ Deno.serve(async (req) => {
       return new Response(`DB error: ${error.message}`, { status: 500 });
     }
 
-    // Backfill existing bookings to Google Calendar so they appear on the admin's phone/app
+    // Backfill existing bookings to Google Calendar so they sync before we redirect (user sees only synced version on calendar)
     try {
-      fetch(`${SUPABASE_URL}/functions/v1/backfill-bookings-to-gcal`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
-        },
-        body: JSON.stringify({ user_id: state }),
-      }).catch((e) => console.error("Backfill trigger failed:", e));
-    } catch (_) {
-      // Don't block redirect
+      const backfillRes = await Promise.race([
+        fetch(`${SUPABASE_URL}/functions/v1/backfill-bookings-to-gcal`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+          },
+          body: JSON.stringify({ user_id: state }),
+        }),
+        new Promise<Response>((_, reject) =>
+          setTimeout(() => reject(new Error("Backfill timeout")), 90000)
+        ),
+      ]) as Response;
+      if (backfillRes.ok) {
+        const data = await backfillRes.json().catch(() => ({}));
+        if (data.synced > 0) console.log("Backfill synced", data.synced, "bookings to Google Calendar");
+      }
+    } catch (e) {
+      console.error("Backfill failed or timed out:", e);
     }
 
     // Redirect back to the app settings page

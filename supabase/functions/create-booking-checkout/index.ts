@@ -111,11 +111,11 @@ serve(async (req) => {
       organization_id,
       location_id,
       staff_id: staffIdParam,
-      customer_name,
       customer_email,
-      customer_phone,
       start_time,
     } = body;
+    const customer_name = (typeof body.customer_name === "string" ? body.customer_name : (body as Record<string, unknown>).customerName as string | undefined)?.trim() || null;
+    const customer_phone = (typeof body.customer_phone === "string" ? body.customer_phone : (body as Record<string, unknown>).customerPhone as string | undefined)?.trim() || null;
 
     const staff_id = (staffIdParam && typeof staffIdParam === "string" && UUID_RE.test(staffIdParam)) ? staffIdParam : null;
 
@@ -146,7 +146,8 @@ serve(async (req) => {
       .from("organization_off_days")
       .select("date")
       .eq("organization_id", organization_id)
-      .eq("date", dateStr);
+      .eq("date", dateStr)
+      .or(`location_id.is.null,location_id.eq.${location_id}`);
     if (customOffDays.length > 0) {
       return new Response(
         JSON.stringify({ error: "This date is not available for booking (closed)." }),
@@ -185,6 +186,30 @@ serve(async (req) => {
       .single();
     if (locError || !loc) throw new Error("Location not found or inactive");
 
+    // Check that the booking time does not fall within a closure window (specific hours closed)
+    const { data: closureSlots = [] } = await supabaseClient
+      .from("location_closure_slots")
+      .select("start_time, end_time")
+      .eq("organization_id", organization_id)
+      .eq("date", dateStr)
+      .or(`location_id.is.null,location_id.eq.${location_id}`);
+    const totalDurationMin = (servicesData as { duration_minutes?: number }[]).reduce((sum, s) => sum + (s.duration_minutes || 30), 0);
+    const bookingEnd = new Date(startDate.getTime() + totalDurationMin * 60000);
+    for (const c of closureSlots as { start_time: string; end_time: string }[]) {
+      const cStartStr = `${dateStr}T${typeof c.start_time === "string" ? c.start_time.slice(0, 5) : "00:00"}:00`;
+      const cEndStr = `${dateStr}T${typeof c.end_time === "string" ? c.end_time.slice(0, 5) : "23:59"}:00`;
+      const cStart = new Date(cStartStr).getTime();
+      const cEnd = new Date(cEndStr).getTime();
+      const bookStart = startDate.getTime();
+      const bookEndTime = bookingEnd.getTime();
+      if (bookStart < cEnd && bookEndTime > cStart) {
+        return new Response(
+          JSON.stringify({ error: "This time falls within a closed period. Please choose another time." }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" }, status: 400 }
+        );
+      }
+    }
+
     // When staff_id is provided, verify the staff member exists and is active
     if (staff_id) {
       const { data: staffMember, error: staffError } = await supabaseClient
@@ -211,7 +236,7 @@ serve(async (req) => {
           location_id,
           staff_id: staff_id || null,
           service_id: service.id,
-          customer_name: customer_name.trim(),
+          customer_name: (customer_name ?? "").trim(),
           customer_email: customer_email.trim().toLowerCase(),
           customer_phone: customer_phone?.trim() || null,
           start_time: currentStart.toISOString(),
@@ -234,6 +259,20 @@ serve(async (req) => {
       bookingIds.push(booking.id);
       currentStart = endTime;
     }
+
+    // Persist customer so data survives booking deletion
+    const customerNameForDb = customer_name && customer_name.trim() ? customer_name.trim() : null;
+    const customerPhoneForDb = customer_phone && customer_phone.trim() ? customer_phone.trim() : null;
+    await supabaseClient.from("confirmed_booking_customers").upsert(
+      {
+        organization_id,
+        customer_email: customer_email.trim().toLowerCase(),
+        customer_name: customerNameForDb,
+        customer_phone: customerPhoneForDb,
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: "organization_id,customer_email" }
+    );
 
     const totalPriceCents = servicesData.reduce(
       (sum, s) => sum + Math.round(Number(s.price) * 100),

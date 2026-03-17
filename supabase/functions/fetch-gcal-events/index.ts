@@ -10,7 +10,8 @@ async function getValidAccessToken(supabase: any, userId: string, clientId: stri
     .from("google_calendar_tokens")
     .select("*")
     .eq("user_id", userId)
-    .single();
+    .is("disconnected_at", null)
+    .maybeSingle();
 
   if (error || !tokenRow) return null;
 
@@ -133,6 +134,7 @@ Deno.serve(async (req) => {
       const priv = e.extendedProperties?.private || {};
       return {
         id: e.id,
+        booking_id: priv.booking_id || null,
         summary: e.summary || "(No title)",
         start: e.start?.dateTime || e.start?.date,
         end: e.end?.dateTime || e.end?.date,
@@ -143,6 +145,25 @@ Deno.serve(async (req) => {
         staff_id: priv.staff_id || null,
       };
     });
+
+    const gcalEventIds = new Set((gcalData.items || []).map((e: any) => e.id));
+    const { data: orgs } = await supabase
+      .from("organizations")
+      .select("id")
+      .eq("owner_id", user_id);
+    const orgIds = (orgs || []).map((o: any) => o.id);
+    if (orgIds.length > 0) {
+      const { data: syncedBookings } = await supabase
+        .from("bookings")
+        .select("id, gcal_event_id")
+        .in("organization_id", orgIds)
+        .not("gcal_event_id", "is", null);
+      for (const b of syncedBookings || []) {
+        if (b.gcal_event_id && !gcalEventIds.has(b.gcal_event_id)) {
+          await supabase.from("bookings").delete().eq("id", b.id);
+        }
+      }
+    }
 
     return new Response(JSON.stringify({ events, connected: true }), {
       status: 200,

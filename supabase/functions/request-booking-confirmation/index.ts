@@ -82,11 +82,13 @@ serve(async (req) => {
         .single();
       const region = (body.region as string) || (orgRow as { holiday_region?: string } | null)?.holiday_region || "NL";
 
+      const location_id = body.location_id as string;
       const { data: customOff = [] } = await supabase
         .from("organization_off_days")
         .select("id")
         .eq("organization_id", organization_id)
-        .eq("date", dateStr);
+        .eq("date", dateStr)
+        .or(`location_id.is.null,location_id.eq.${location_id}`);
       if (customOff.length > 0) {
         return new Response(
           JSON.stringify({ error: "This date is not available for booking (closed)." }),

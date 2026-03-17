@@ -24,22 +24,22 @@ serve(async (req) => {
 
     const appUrl = (Deno.env.get("APP_URL") || "").replace(/\/$/, "");
     const confirmUrl = appUrl ? `${appUrl}/confirm-password-change?token=${encodeURIComponent(confirm_token)}` : "";
-    const name = full_name || "there";
+    const name = full_name || "beste klant";
 
     const html = `
       <div style="font-family: Arial, sans-serif; max-width: 500px; margin: 0 auto; padding: 24px;">
-        <h1 style="color: #3990f0;">Confirm your password change</h1>
-        <p>Hi ${name},</p>
-        <p>You requested a password change for your Salonora account. Click the link below to confirm and activate your new password.</p>
-        ${confirmUrl ? `<p><a href="${confirmUrl}" style="display: inline-block; background: #3990f0; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px;">Confirm password change</a></p>` : ""}
-        <p style="color: #6b7280; font-size: 14px;">If you didn't request this change, please contact support or reset your password again.</p>
+        <h1 style="color: #3990f0;">Bevestig je wachtwoordwijziging</h1>
+        <p>Hallo ${name},</p>
+        <p>Je hebt een wachtwoordwijziging aangevraagd voor je Salonora-account. Klik op de onderstaande link om te bevestigen en je nieuwe wachtwoord te activeren.</p>
+        ${confirmUrl ? `<p><a href="${confirmUrl}" style="display: inline-block; background: #3990f0; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px;">Wachtwoordwijziging bevestigen</a></p>` : ""}
+        <p style="color: #6b7280; font-size: 14px;">Als je deze wijziging niet hebt aangevraagd, neem dan contact op met de klantenservice of stel je wachtwoord opnieuw in.</p>
       </div>
     `;
 
     await resend.emails.send({
       from: `${fromName} <${fromEmail}>`,
       to: [email],
-      subject: "Confirm your password change - Salonora",
+      subject: "Bevestig je wachtwoordwijziging - Salonora",
       html,
     });
 

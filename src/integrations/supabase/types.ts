@@ -282,11 +282,47 @@ export type Database = {
           { foreignKeyName: "customer_reminder_preferences_organization_id_fkey", columns: ["organization_id"], isOneToOne: false, referencedRelation: "organizations", referencedColumns: ["id"] },
         ]
       }
+      confirmed_booking_customers: {
+        Row: {
+          id: string
+          organization_id: string
+          customer_email: string
+          customer_name: string | null
+          customer_phone: string | null
+          has_confirmed_once: boolean
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          organization_id: string
+          customer_email: string
+          customer_name?: string | null
+          customer_phone?: string | null
+          has_confirmed_once?: boolean
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          organization_id?: string
+          customer_email?: string
+          customer_name?: string | null
+          customer_phone?: string | null
+          has_confirmed_once?: boolean
+          created_at?: string
+          updated_at?: string
+        }
+        Relationships: [
+          { foreignKeyName: "confirmed_booking_customers_organization_id_fkey", columns: ["organization_id"], isOneToOne: false, referencedRelation: "organizations", referencedColumns: ["id"] },
+        ]
+      }
       google_calendar_tokens: {
         Row: {
           access_token: string
           calendar_id: string
           created_at: string
+          disconnected_at: string | null
           id: string
           refresh_token: string
           token_expires_at: string
@@ -297,6 +333,7 @@ export type Database = {
           access_token: string
           calendar_id?: string
           created_at?: string
+          disconnected_at?: string | null
           id?: string
           refresh_token: string
           token_expires_at: string
@@ -307,6 +344,7 @@ export type Database = {
           access_token?: string
           calendar_id?: string
           created_at?: string
+          disconnected_at?: string | null
           id?: string
           refresh_token?: string
           token_expires_at?: string
@@ -399,6 +437,7 @@ export type Database = {
         Row: {
           id: string
           organization_id: string
+          location_id: string | null
           date: string
           reason: string | null
           created_at: string
@@ -406,6 +445,7 @@ export type Database = {
         Insert: {
           id?: string
           organization_id: string
+          location_id?: string | null
           date: string
           reason?: string | null
           created_at?: string
@@ -413,6 +453,7 @@ export type Database = {
         Update: {
           id?: string
           organization_id?: string
+          location_id?: string | null
           date?: string
           reason?: string | null
           created_at?: string
@@ -423,6 +464,61 @@ export type Database = {
             columns: ["organization_id"]
             isOneToOne: false
             referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "organization_off_days_location_id_fkey"
+            columns: ["location_id"]
+            isOneToOne: false
+            referencedRelation: "locations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      location_closure_slots: {
+        Row: {
+          id: string
+          organization_id: string
+          location_id: string | null
+          date: string
+          start_time: string
+          end_time: string
+          reason: string | null
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          organization_id: string
+          location_id?: string | null
+          date: string
+          start_time: string
+          end_time: string
+          reason?: string | null
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          organization_id?: string
+          location_id?: string | null
+          date?: string
+          start_time?: string
+          end_time?: string
+          reason?: string | null
+          created_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "location_closure_slots_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "location_closure_slots_location_id_fkey"
+            columns: ["location_id"]
+            isOneToOne: false
+            referencedRelation: "locations"
             referencedColumns: ["id"]
           },
         ]

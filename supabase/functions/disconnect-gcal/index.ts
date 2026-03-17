@@ -186,14 +186,26 @@ Deno.serve(async (req) => {
         created_at: start,
         updated_at: start,
       });
-      if (!insertErr) transferred += 1;
+      if (!insertErr) {
+        transferred += 1;
+        await supabaseAdmin.from("confirmed_booking_customers").upsert(
+          {
+            organization_id,
+            customer_email: customer_email.slice(0, 500),
+            customer_name: customer_name.slice(0, 500) || null,
+            customer_phone: null,
+            updated_at: new Date().toISOString(),
+          },
+          { onConflict: "organization_id,customer_email" }
+        );
+      }
     }
 
     await supabaseAdmin.from("gcal_disconnect_log").insert({
       user_id: userId,
       disconnected_at: now.toISOString(),
     });
-    await supabaseAdmin.from("google_calendar_tokens").delete().eq("user_id", userId);
+    await supabaseAdmin.from("google_calendar_tokens").update({ disconnected_at: now.toISOString() }).eq("user_id", userId);
 
     return new Response(
       JSON.stringify({ success: true, transferred, message: `Disconnected. ${transferred} event(s) transferred to your calendar.` }),

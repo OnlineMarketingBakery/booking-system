@@ -22,22 +22,22 @@ serve(async (req) => {
     const { email, full_name } = await req.json();
     if (!email) throw new Error("email is required");
 
-    const name = full_name || "there";
+    const name = full_name || "beste klant";
 
     const html = `
       <div style="font-family: Arial, sans-serif; max-width: 500px; margin: 0 auto; padding: 24px;">
-        <h1 style="color: #6b7280;">Your account request was not approved</h1>
-        <p>Hi ${name},</p>
-        <p>Thank you for your interest. After review, we are unable to approve your account request at this time.</p>
-        <p>If you believe this was a mistake or have questions, please contact support.</p>
-        <p style="color: #6b7280; font-size: 14px;">Thank you.</p>
+        <h1 style="color: #6b7280;">Je accountaanvraag is niet goedgekeurd</h1>
+        <p>Hallo ${name},</p>
+        <p>Bedankt voor je belangstelling. Na beoordeling kunnen we je accountaanvraag op dit moment niet goedkeuren.</p>
+        <p>Als je denkt dat dit een vergissing is of vragen hebt, neem dan contact op met de klantenservice.</p>
+        <p style="color: #6b7280; font-size: 14px;">Met vriendelijke groet,</p>
       </div>
     `;
 
     await resend.emails.send({
       from: `${fromName} <${fromEmail}>`,
       to: [email],
-      subject: "Your account request was not approved",
+      subject: "Je accountaanvraag is niet goedgekeurd",
       html,
     });
 

@@ -10,7 +10,8 @@ async function getValidAccessToken(supabase: any, userId: string, clientId: stri
     .from("google_calendar_tokens")
     .select("*")
     .eq("user_id", userId)
-    .single();
+    .is("disconnected_at", null)
+    .maybeSingle();
 
   if (error || !tokenRow) return null;
 
@@ -126,6 +127,7 @@ Deno.serve(async (req) => {
       end: { dateTime: booking.end_time, timeZone: "UTC" },
       extendedProperties: {
         private: {
+          booking_id: booking_id,
           location_id: booking.location_id,
           organization_id: booking.organization_id,
           service_id: booking.service_id,
