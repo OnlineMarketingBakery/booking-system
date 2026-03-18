@@ -956,7 +956,7 @@ export default function BookingPage() {
                     className="w-full embed-outline-btn"
                     onClick={() => setStep("location")}
                   >
-                    ← Rug
+                    ← Terug
                   </Button>
                 )}
               </CardContent>
@@ -1063,7 +1063,7 @@ export default function BookingPage() {
                   className="w-full embed-outline-btn"
                   onClick={() => setStep("service")}
                 >
-                  ← Rug
+                  ← Terug
                 </Button>
               </CardContent>
             </>
@@ -1179,7 +1179,7 @@ export default function BookingPage() {
                     className="w-full embed-outline-btn"
                     onClick={() => setStep("time")}
                   >
-                    ← Rug
+                    ← Terug
                   </Button>
                 </form>
               </CardContent>
