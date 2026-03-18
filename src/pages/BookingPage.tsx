@@ -375,20 +375,25 @@ export default function BookingPage() {
       const dayStart = new Date(selectedDate + "T00:00:00").toISOString();
       const dayEnd = new Date(selectedDate + "T23:59:59").toISOString();
 
-      // When no staff is selected, no need to check existing bookings or calendar — all location slots are available
-      let existing: { start_time: string; end_time: string }[] = [];
+      // All bookings at this location block the same wall-clock slot for every customer
+      const { data: busyIntervals, error: busyErr } = await supabase.rpc(
+        "get_location_busy_intervals",
+        {
+          p_location_id: selectedLocation,
+          p_range_start: dayStart,
+          p_range_end: dayEnd,
+          p_exclude_pending_token: null,
+        },
+      );
+      if (busyErr) {
+        console.error("[booking-slots] get_location_busy_intervals:", busyErr);
+      }
+      const existing: { start_time: string; end_time: string }[] =
+        busyIntervals ?? [];
+
       let gcalEvents: { start: string; end: string }[] = [];
       if (selectedStaff) {
-        const { data: existingData } = await supabase
-          .from("bookings")
-          .select("start_time, end_time")
-          .eq("staff_id", selectedStaff)
-          .gte("start_time", dayStart)
-          .lte("start_time", dayEnd)
-          .neq("status", "cancelled");
-        existing = existingData ?? [];
         try {
-          // Only fetch Google Calendar events when the org has connected Google (optional sync)
           const { data: gcalData } = await supabase.functions.invoke(
             "fetch-gcal-events",
             {
@@ -400,7 +405,7 @@ export default function BookingPage() {
             },
           );
           if (gcalData?.events) {
-            gcalEvents = gcalData.events.map((e: any) => ({
+            gcalEvents = gcalData.events.map((e: { start: string; end: string }) => ({
               start: e.start,
               end: e.end,
             }));
@@ -506,12 +511,23 @@ export default function BookingPage() {
             customer_email: (customerEmail || ((form.get("email") as string)?.trim() ?? "")).trim() || "",
             customer_phone: phone,
             start_time: startTime.toISOString(),
+            customer_slot_date: selectedDate,
+            customer_slot_time: selectedTime,
             save_my_info: saveMyInfo,
             region: adminRegion,
           },
         },
       );
-      if (error) throw error;
+      if (error) {
+        setBooking(false);
+        const d = data as { error?: string } | null | undefined;
+        toast({
+          title: "Boeking mislukt",
+          description: d?.error?.trim() || error.message,
+          variant: "destructive",
+        });
+        return;
+      }
 
       if (data.confirm_sent) {
         if (saveMyInfo && org?.id) {

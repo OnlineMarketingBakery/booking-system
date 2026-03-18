@@ -8,6 +8,41 @@ const corsHeaders = {
     "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
+/** Fallback for older bookings without customer_slot_* (stored display fields). */
+function bookingEmailTimezone(): string {
+  return Deno.env.get("BOOKING_EMAIL_TIMEZONE") || "Europe/Amsterdam";
+}
+
+function formatDateNlFromYmd(ymd: string): string {
+  const [y, m, d] = ymd.split("-").map(Number);
+  const utc = new Date(Date.UTC(y, m - 1, d));
+  return utc.toLocaleDateString("nl-NL", {
+    weekday: "long",
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+    timeZone: "UTC",
+  });
+}
+
+function formatBookingLocalDateTime(iso: string): { date: string; time: string } {
+  const d = new Date(iso);
+  const tz = bookingEmailTimezone();
+  const date = d.toLocaleDateString("nl-NL", {
+    weekday: "long",
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+    timeZone: tz,
+  });
+  const time = d.toLocaleTimeString("nl-NL", {
+    hour: "numeric",
+    minute: "2-digit",
+    timeZone: tz,
+  });
+  return { date, time };
+}
+
 serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
@@ -28,7 +63,17 @@ serve(async (req) => {
 
     // Type: confirm_booking — email asking customer to confirm their booking (no booking_id)
     if (type === "confirm_booking") {
-      const { token, customer_email, customer_name, org_name, formatted_date, formatted_time, service_summary, confirm_url } = confirm_booking || {};
+      const {
+        token,
+        customer_email,
+        customer_name,
+        org_name,
+        formatted_date,
+        formatted_time,
+        service_summary,
+        confirm_url,
+        release_hold_url,
+      } = confirm_booking || {};
       if (!token || !customer_email || !confirm_url) throw new Error("confirm_booking requires token, customer_email, confirm_url");
       const subject = `Bevestig je reservering — ${org_name || "Je salon"}`;
       const html = `
@@ -44,6 +89,9 @@ serve(async (req) => {
           <p style="margin: 24px 0;">
             <a href="${confirm_url}" style="display: inline-block; background: #3990f0; color: white; padding: 12px 24px; text-decoration: none; border-radius: 8px; font-weight: bold;">Reservering bevestigen</a>
           </p>
+          ${release_hold_url ? `<p style="margin: 16px 0; font-size: 14px;">
+            <a href="${release_hold_url}" style="color: #6b7280;">Toch geen afspraak? Annuleer deze tijdsreservering</a>
+          </p>` : ""}
           <p style="color: #6b7280; font-size: 14px;">Deze link verloopt over 24 uur. Als je dit niet hebt aangevraagd, kun je deze e-mail negeren.</p>
         </div>
       `;
@@ -74,12 +122,21 @@ serve(async (req) => {
     const staff = (booking as any).staff;
     const location = (booking as any).locations;
     const org = (booking as any).organizations;
-    const startTime = new Date(booking.start_time);
     const currencySymbols: Record<string, string> = { usd: "$", eur: "€", gbp: "£", cad: "C$", aud: "A$", jpy: "¥", inr: "₹", brl: "R$" };
     const symbol = currencySymbols[service?.currency || "eur"] || "€";
 
-    const formattedDate = startTime.toLocaleDateString("nl-NL", { weekday: "long", year: "numeric", month: "long", day: "numeric" });
-    const formattedTime = startTime.toLocaleTimeString("nl-NL", { hour: "numeric", minute: "2-digit" });
+    const slotDate = (booking as { customer_slot_date?: string | null }).customer_slot_date;
+    const slotTime = (booking as { customer_slot_time?: string | null }).customer_slot_time;
+    let formattedDate: string;
+    let formattedTime: string;
+    if (slotDate && slotTime) {
+      formattedDate = formatDateNlFromYmd(slotDate);
+      formattedTime = slotTime;
+    } else {
+      const fm = formatBookingLocalDateTime(booking.start_time as string);
+      formattedDate = fm.date;
+      formattedTime = fm.time;
+    }
 
     let subject = "";
     let heading = "";

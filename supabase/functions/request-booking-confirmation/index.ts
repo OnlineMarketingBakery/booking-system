@@ -9,6 +9,35 @@ const corsHeaders = {
 };
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const SLOT_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+const SLOT_TIME_RE = /^([01]?\d|2[0-3]):[0-5]\d$/;
+
+function parseCustomerSlot(body: Record<string, unknown>): { date: string; time: string } | null {
+  const d = body.customer_slot_date;
+  const t = body.customer_slot_time;
+  if (typeof d !== "string" || typeof t !== "string") return null;
+  if (!SLOT_DATE_RE.test(d.trim())) return null;
+  const ds = d.trim();
+  const [y, mo, da] = ds.split("-").map(Number);
+  const check = new Date(Date.UTC(y, mo - 1, da));
+  if (check.getUTCFullYear() !== y || check.getUTCMonth() !== mo - 1 || check.getUTCDate() !== da) return null;
+  const tm = t.trim();
+  if (!SLOT_TIME_RE.test(tm)) return null;
+  const [hh, mm] = tm.split(":");
+  return { date: ds, time: `${hh.padStart(2, "0")}:${mm}` };
+}
+
+function formatDateNlFromYmd(ymd: string): string {
+  const [y, m, d] = ymd.split("-").map(Number);
+  const utc = new Date(Date.UTC(y, m - 1, d));
+  return utc.toLocaleDateString("nl-NL", {
+    weekday: "long",
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+    timeZone: "UTC",
+  });
+}
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const PHONE_RE = /^[\+\d\s\-\(\)]*$/;
 
@@ -56,7 +85,7 @@ serve(async (req) => {
     );
 
     const body = await req.json();
-    const { errors } = validateInput(body);
+    const { serviceIds, errors } = validateInput(body);
     if (errors.length > 0) {
       return new Response(
         JSON.stringify({ error: "Validation failed", details: errors }),
@@ -65,6 +94,7 @@ serve(async (req) => {
     }
 
     const organization_id = body.organization_id as string;
+    const location_id = body.location_id as string;
     const customer_email = (body.customer_email as string).trim().toLowerCase();
     const save_my_info = !!body.save_my_info;
     const start_time = body.start_time as string;
@@ -82,7 +112,6 @@ serve(async (req) => {
         .single();
       const region = (body.region as string) || (orgRow as { holiday_region?: string } | null)?.holiday_region || "NL";
 
-      const location_id = body.location_id as string;
       const { data: customOff = [] } = await supabase
         .from("organization_off_days")
         .select("id")
@@ -145,19 +174,66 @@ serve(async (req) => {
       return new Response(JSON.stringify(data), { headers: { ...corsHeaders, "Content-Type": "application/json" }, status: 200 });
     }
 
+    // New customer: block slot while awaiting email confirmation (same rules as checkout)
+    const startDate = new Date(start_time);
+    const { data: holdServices, error: holdSvcErr } = await supabase
+      .from("services")
+      .select("duration_minutes")
+      .in("id", serviceIds)
+      .eq("is_active", true);
+    if (holdSvcErr || !holdServices || holdServices.length !== serviceIds.length) {
+      return new Response(
+        JSON.stringify({ error: "One or more services are invalid or inactive." }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" }, status: 400 },
+      );
+    }
+    const holdDurationMin = (holdServices as { duration_minutes?: number }[]).reduce(
+      (sum, s) => sum + (s.duration_minutes || 30),
+      0,
+    );
+    const holdEnd = new Date(startDate.getTime() + holdDurationMin * 60000);
+    const BUFFER_MIN = 15;
+    const { data: holdBusy, error: holdBusyErr } = await supabase.rpc("get_location_busy_intervals", {
+      p_location_id: location_id,
+      p_range_start: startDate.toISOString(),
+      p_range_end: holdEnd.toISOString(),
+      p_exclude_pending_token: null,
+    });
+    if (holdBusyErr) {
+      console.error("[request-booking-confirmation] busy intervals:", holdBusyErr);
+    } else {
+      const bufferMs = BUFFER_MIN * 60 * 1000;
+      const ns = startDate.getTime();
+      const ne = holdEnd.getTime();
+      for (const row of holdBusy ?? []) {
+        const bs = new Date((row as { start_time: string }).start_time).getTime();
+        const be = new Date((row as { end_time: string }).end_time).getTime() + bufferMs;
+        if (ns < be && ne > bs) {
+          return new Response(
+            JSON.stringify({
+              error: "This time slot is no longer available. Please choose another time.",
+            }),
+            { headers: { ...corsHeaders, "Content-Type": "application/json" }, status: 409 },
+          );
+        }
+      }
+    }
+
     // New customer: store pending and send confirm email
     const token = crypto.randomUUID();
     const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+    const slot = parseCustomerSlot(body as Record<string, unknown>);
     const payload = {
       organization_id: body.organization_id,
-      location_id: body.location_id,
+      location_id,
       staff_id: body.staff_id ?? null,
-      service_ids: body.service_ids,
+      service_ids: serviceIds,
       customer_name: (body.customer_name as string).trim(),
       customer_email,
       customer_phone: (body.customer_phone as string)?.trim() || null,
       start_time: body.start_time,
       region: body.region ?? null,
+      ...(slot ? { customer_slot_date: slot.date, customer_slot_time: slot.time } : {}),
     };
 
     const { error: insertErr } = await supabase
@@ -171,7 +247,22 @@ serve(async (req) => {
 
     const appUrl = Deno.env.get("APP_URL") || req.headers.get("origin") || "http://localhost:8080";
     const confirmUrl = `${appUrl}/book/confirm?token=${token}`;
-    const startTime = new Date(payload.start_time);
+    const releaseHoldUrl = `${appUrl}/book/release-hold?token=${token}`;
+    const slotForEmail = parseCustomerSlot(payload as unknown as Record<string, unknown>);
+    const startTime = new Date(payload.start_time as string);
+    const emailTz = Deno.env.get("BOOKING_EMAIL_TIMEZONE") || "Europe/Amsterdam";
+    const formatted_date = slotForEmail
+      ? formatDateNlFromYmd(slotForEmail.date)
+      : startTime.toLocaleDateString("nl-NL", {
+        weekday: "long",
+        year: "numeric",
+        month: "long",
+        day: "numeric",
+        timeZone: emailTz,
+      });
+    const formatted_time = slotForEmail
+      ? slotForEmail.time
+      : startTime.toLocaleTimeString("nl-NL", { hour: "numeric", minute: "2-digit", timeZone: emailTz });
 
     await fetch(`${Deno.env.get("SUPABASE_URL")}/functions/v1/send-booking-email`, {
       method: "POST",
@@ -183,10 +274,11 @@ serve(async (req) => {
           customer_email,
           customer_name: payload.customer_name,
           org_name: org?.name || "Salonora",
-          formatted_date: startTime.toLocaleDateString("en-US", { weekday: "long", year: "numeric", month: "long", day: "numeric" }),
-          formatted_time: startTime.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" }),
+          formatted_date,
+          formatted_time,
           service_summary,
           confirm_url: confirmUrl,
+          release_hold_url: releaseHoldUrl,
         },
       }),
     });

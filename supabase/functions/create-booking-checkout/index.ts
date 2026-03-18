@@ -82,6 +82,25 @@ function validateInput(body: Record<string, unknown>) {
   return { serviceIds, errors };
 }
 
+const SLOT_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+const SLOT_TIME_RE = /^([01]?\d|2[0-3]):[0-5]\d$/;
+
+/** Date + time exactly as shown on the booking UI (for customer-facing emails). */
+function parseCustomerSlot(body: Record<string, unknown>): { date: string; time: string } | null {
+  const d = body.customer_slot_date;
+  const t = body.customer_slot_time;
+  if (typeof d !== "string" || typeof t !== "string") return null;
+  if (!SLOT_DATE_RE.test(d.trim())) return null;
+  const ds = d.trim();
+  const [y, mo, da] = ds.split("-").map(Number);
+  const check = new Date(Date.UTC(y, mo - 1, da));
+  if (check.getUTCFullYear() !== y || check.getUTCMonth() !== mo - 1 || check.getUTCDate() !== da) return null;
+  const tm = t.trim();
+  if (!SLOT_TIME_RE.test(tm)) return null;
+  const [hh, mm] = tm.split(":");
+  return { date: ds, time: `${hh.padStart(2, "0")}:${mm}` };
+}
+
 serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
@@ -221,28 +240,71 @@ serve(async (req) => {
       if (staffError || !staffMember) throw new Error("Staff member not found or inactive");
     }
 
+    const BUFFER_MIN = 15;
+    const excludePendingToken =
+      typeof (body as Record<string, unknown>).pending_confirmation_token === "string"
+        ? ((body as Record<string, unknown>).pending_confirmation_token as string).trim() || null
+        : null;
+    const { data: busyRows, error: busyErr } = await supabaseClient.rpc(
+      "get_location_busy_intervals",
+      {
+        p_location_id: location_id,
+        p_range_start: startDate.toISOString(),
+        p_range_end: bookingEnd.toISOString(),
+        p_exclude_pending_token: excludePendingToken,
+      },
+    );
+    if (busyErr) {
+      console.error("[create-booking-checkout] get_location_busy_intervals:", busyErr);
+    } else {
+      const bufferMs = BUFFER_MIN * 60 * 1000;
+      const ns = startDate.getTime();
+      const ne = bookingEnd.getTime();
+      for (const row of busyRows ?? []) {
+        const bs = new Date((row as { start_time: string }).start_time).getTime();
+        const be = new Date((row as { end_time: string }).end_time).getTime() + bufferMs;
+        if (ns < be && ne > bs) {
+          return new Response(
+            JSON.stringify({
+              error: "This time slot is no longer available. Please choose another time.",
+            }),
+            { headers: { ...corsHeaders, "Content-Type": "application/json" }, status: 409 },
+          );
+        }
+      }
+    }
+
+    const customerSlot = parseCustomerSlot(body as Record<string, unknown>);
+
     // Create bookings sequentially (back-to-back)
     const bookingIds: string[] = [];
     let currentStart = new Date(start_time);
+    let segmentIndex = 0;
 
     for (const service of servicesData) {
       const duration = service.duration_minutes || 30;
       const endTime = new Date(currentStart.getTime() + duration * 60000);
 
+      const row: Record<string, unknown> = {
+        organization_id,
+        location_id,
+        staff_id: staff_id || null,
+        service_id: service.id,
+        customer_name: (customer_name ?? "").trim(),
+        customer_email: customer_email.trim().toLowerCase(),
+        customer_phone: customer_phone?.trim() || null,
+        start_time: currentStart.toISOString(),
+        end_time: endTime.toISOString(),
+        status: "pending",
+      };
+      if (segmentIndex === 0 && customerSlot) {
+        row.customer_slot_date = customerSlot.date;
+        row.customer_slot_time = customerSlot.time;
+      }
+
       const { data: booking, error: bookingError } = await supabaseClient
         .from("bookings")
-        .insert({
-          organization_id,
-          location_id,
-          staff_id: staff_id || null,
-          service_id: service.id,
-          customer_name: (customer_name ?? "").trim(),
-          customer_email: customer_email.trim().toLowerCase(),
-          customer_phone: customer_phone?.trim() || null,
-          start_time: currentStart.toISOString(),
-          end_time: endTime.toISOString(),
-          status: "pending",
-        })
+        .insert(row as Record<string, unknown>)
         .select()
         .single();
       if (bookingError) {
@@ -258,6 +320,7 @@ serve(async (req) => {
 
       bookingIds.push(booking.id);
       currentStart = endTime;
+      segmentIndex += 1;
     }
 
     // Persist customer so data survives booking deletion

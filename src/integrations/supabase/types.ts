@@ -130,6 +130,8 @@ export type Database = {
           customer_email: string
           customer_name: string
           customer_phone: string | null
+          customer_slot_date: string | null
+          customer_slot_time: string | null
           end_time: string
           gcal_event_id: string | null
           id: string
@@ -149,6 +151,8 @@ export type Database = {
           customer_email: string
           customer_name: string
           customer_phone?: string | null
+          customer_slot_date?: string | null
+          customer_slot_time?: string | null
           end_time: string
           gcal_event_id?: string | null
           id?: string
@@ -168,6 +172,8 @@ export type Database = {
           customer_email?: string
           customer_name?: string
           customer_phone?: string | null
+          customer_slot_date?: string | null
+          customer_slot_time?: string | null
           end_time?: string
           gcal_event_id?: string | null
           id?: string
@@ -972,6 +978,15 @@ export type Database = {
           _user_id: string
         }
         Returns: boolean
+      }
+      get_location_busy_intervals: {
+        Args: {
+          p_location_id: string
+          p_range_end: string
+          p_range_start: string
+          p_exclude_pending_token?: string | null
+        }
+        Returns: { start_time: string; end_time: string }[]
       }
     }
     Enums: {

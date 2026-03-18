@@ -52,7 +52,10 @@ serve(async (req) => {
 
     const payload = (pending as { payload: Record<string, unknown> }).payload;
     const save_my_info = !!(pending as { save_my_info: boolean }).save_my_info;
-    const checkoutBody = { ...payload };
+    const checkoutBody = {
+      ...payload,
+      pending_confirmation_token: token,
+    };
     delete (checkoutBody as Record<string, unknown>).save_my_info;
 
     const url = `${Deno.env.get("SUPABASE_URL")}/functions/v1/create-booking-checkout`;
