@@ -529,6 +529,87 @@ export type Database = {
           },
         ]
       }
+      organization_break_slot_staff: {
+        Row: {
+          break_slot_id: string
+          staff_id: string
+        }
+        Insert: {
+          break_slot_id: string
+          staff_id: string
+        }
+        Update: {
+          break_slot_id?: string
+          staff_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "organization_break_slot_staff_break_slot_id_fkey"
+            columns: ["break_slot_id"]
+            isOneToOne: false
+            referencedRelation: "organization_break_slots"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "organization_break_slot_staff_staff_id_fkey"
+            columns: ["staff_id"]
+            isOneToOne: false
+            referencedRelation: "staff"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      organization_break_slots: {
+        Row: {
+          applies_date: string | null
+          applies_whole_salon: boolean
+          created_at: string
+          end_time: string
+          id: string
+          is_recurring: boolean
+          location_id: string
+          organization_id: string
+          start_time: string
+        }
+        Insert: {
+          applies_date?: string | null
+          applies_whole_salon?: boolean
+          created_at?: string
+          end_time: string
+          id?: string
+          is_recurring?: boolean
+          location_id: string
+          organization_id: string
+          start_time: string
+        }
+        Update: {
+          applies_date?: string | null
+          applies_whole_salon?: boolean
+          created_at?: string
+          end_time?: string
+          id?: string
+          is_recurring?: boolean
+          location_id?: string
+          organization_id?: string
+          start_time?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "organization_break_slots_location_id_fkey"
+            columns: ["location_id"]
+            isOneToOne: false
+            referencedRelation: "locations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "organization_break_slots_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       organizations: {
         Row: {
           created_at: string

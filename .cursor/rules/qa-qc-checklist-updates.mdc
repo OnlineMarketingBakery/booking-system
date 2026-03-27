@@ -1,0 +1,14 @@
+---
+description: Update the QA/QC checklist when user-facing product behavior changes
+alwaysApply: true
+---
+
+# QA checklist maintenance
+
+When you add or change **anything customers or salon users see or do** (screens, steps, emails, permissions, embed, booking rules, dashboard sections), update **`QA_QC_CHECKLIST.md`** in the same release:
+
+- Add new checkboxes in plain language (no code terms, no file names).
+- Adjust or remove items if behavior was removed or replaced.
+- Bump the “Last reviewed against the app” date when you do a full pass.
+
+The checklist is for **non-technical** QA testers; keep wording simple and outcome-focused (“user sees…”, “email arrives…”, “button saves…”).

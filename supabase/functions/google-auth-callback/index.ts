@@ -115,11 +115,11 @@ Deno.serve(async (req) => {
       console.error("Backfill failed or timed out:", e);
     }
 
-    // Redirect back to the app settings page
+    // Redirect back to booking settings (Google Calendar section)
     const appUrl = Deno.env.get("APP_URL") || "http://localhost:8080";
     return new Response(null, {
       status: 302,
-      headers: { Location: `${appUrl}/dashboard/settings?gcal=connected` },
+      headers: { Location: `${appUrl}/dashboard/bookings/settings?gcal=connected` },
     });
   } catch (err) {
     console.error("Callback error:", err);

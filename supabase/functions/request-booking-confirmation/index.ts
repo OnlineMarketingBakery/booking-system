@@ -192,6 +192,83 @@ serve(async (req) => {
       0,
     );
     const holdEnd = new Date(startDate.getTime() + holdDurationMin * 60000);
+    const dateStr = startDate.toISOString().slice(0, 10);
+
+    const { data: breakSlotRows = [] } = await supabase
+      .from("organization_break_slots")
+      .select("is_recurring, applies_date, start_time, end_time, applies_whole_salon, organization_break_slot_staff(staff_id)")
+      .eq("organization_id", organization_id)
+      .eq("location_id", location_id);
+
+    const applicableBreaks = (breakSlotRows as {
+      is_recurring: boolean;
+      applies_date: string | null;
+      start_time: string;
+      end_time: string;
+      applies_whole_salon: boolean;
+      organization_break_slot_staff: { staff_id: string }[] | null;
+    }[]).filter(
+      (b) => b.is_recurring || (b.applies_date && String(b.applies_date).slice(0, 10) === dateStr),
+    );
+
+    const holdOverlapsBreak = (bStart: string, bEnd: string) => {
+      const cStartStr = `${dateStr}T${String(bStart).slice(0, 5)}:00`;
+      const cEndStr = `${dateStr}T${String(bEnd).slice(0, 5)}:00`;
+      const cStart = new Date(cStartStr).getTime();
+      const cEnd = new Date(cEndStr).getTime();
+      const bookStart = startDate.getTime();
+      const bookEndTime = holdEnd.getTime();
+      return bookStart < cEnd && bookEndTime > cStart;
+    };
+
+    const staffIdHold = typeof body.staff_id === "string" && UUID_RE.test(body.staff_id as string)
+      ? (body.staff_id as string)
+      : null;
+
+    for (const b of applicableBreaks) {
+      if (!b.applies_whole_salon) continue;
+      if (holdOverlapsBreak(b.start_time, b.end_time)) {
+        return new Response(
+          JSON.stringify({ error: "This time falls within a break period. Please choose another time." }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" }, status: 400 }
+        );
+      }
+    }
+
+    const staffOverlappingBreaks = applicableBreaks.filter(
+      (b) => !b.applies_whole_salon && holdOverlapsBreak(b.start_time, b.end_time),
+    );
+
+    if (staffIdHold) {
+      for (const b of staffOverlappingBreaks) {
+        const ids = b.organization_break_slot_staff ?? [];
+        if (ids.some((x) => x.staff_id === staffIdHold)) {
+          return new Response(
+            JSON.stringify({ error: "This time falls within a staff break period. Please choose another time." }),
+            { headers: { ...corsHeaders, "Content-Type": "application/json" }, status: 400 }
+          );
+        }
+      }
+    } else if (staffOverlappingBreaks.length > 0) {
+      const { data: slinks } = await supabase.from("staff_locations").select("staff_id").eq("location_id", location_id);
+      const sids = [...new Set((slinks ?? []).map((r: { staff_id: string }) => r.staff_id))];
+      if (sids.length > 0) {
+        const { data: activeS } = await supabase.from("staff").select("id").in("id", sids).eq("is_active", true);
+        const activeSet = new Set((activeS ?? []).map((r: { id: string }) => r.id));
+        const anyFree = [...activeSet].some((sid) =>
+          !staffOverlappingBreaks.some((br) =>
+            (br.organization_break_slot_staff ?? []).some((x: { staff_id: string }) => x.staff_id === sid),
+          ),
+        );
+        if (!anyFree) {
+          return new Response(
+            JSON.stringify({ error: "This time falls within a break period. Please choose another time." }),
+            { headers: { ...corsHeaders, "Content-Type": "application/json" }, status: 400 }
+          );
+        }
+      }
+    }
+
     const BUFFER_MIN = 15;
     const { data: holdBusy, error: holdBusyErr } = await supabase.rpc("get_location_busy_intervals", {
       p_location_id: location_id,

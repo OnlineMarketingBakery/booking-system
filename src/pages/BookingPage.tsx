@@ -366,9 +366,49 @@ export default function BookingPage() {
         start_time: (r.start_time as string).slice(0, 5),
         end_time: (r.end_time as string).slice(0, 5),
       }));
+
+      const { data: breakSlotRows = [] } = await supabase
+        .from("organization_break_slots")
+        .select("is_recurring, applies_date, start_time, end_time, applies_whole_salon, organization_break_slot_staff(staff_id)")
+        .eq("organization_id", org!.id)
+        .eq("location_id", selectedLocation);
+
+      const applicableBreaks = (breakSlotRows as {
+        is_recurring: boolean;
+        applies_date: string | null;
+        start_time: string;
+        end_time: string;
+        applies_whole_salon: boolean;
+        organization_break_slot_staff: { staff_id: string }[] | null;
+      }[]).filter((b) => b.is_recurring || (b.applies_date && (b.applies_date as string).slice(0, 10) === dateStr));
+
+      const wholeSalonBreakClosures = applicableBreaks
+        .filter((b) => b.applies_whole_salon)
+        .map((b) => ({
+          start_time: b.start_time.slice(0, 5),
+          end_time: b.end_time.slice(0, 5),
+        }));
+      const staffOnlyBreaks = applicableBreaks.filter((b) => !b.applies_whole_salon);
+
+      const { data: locStaffLinks = [] } = await supabase
+        .from("staff_locations")
+        .select("staff_id")
+        .eq("location_id", selectedLocation);
+      const locStaffIds = [...new Set(locStaffLinks.map((r) => r.staff_id))];
+      let activeStaffAtLocation = new Set<string>();
+      if (locStaffIds.length > 0) {
+        const { data: activeRows } = await supabase
+          .from("staff_public")
+          .select("id")
+          .in("id", locStaffIds)
+          .eq("is_active", true);
+        activeStaffAtLocation = new Set((activeRows ?? []).map((r) => r.id as string));
+      }
+
+      const closuresWithBreaks = [...closures, ...wholeSalonBreakClosures];
       const openWindows = subtractClosureWindows(
         avail.map((a) => ({ start_time: a.start_time, end_time: a.end_time })),
-        closures
+        closuresWithBreaks
       );
       if (openWindows.length === 0) return [];
 
@@ -449,10 +489,29 @@ export default function BookingPage() {
             const eeWithBuffer = addMinutes(ee, BOOKING_SLOT_BUFFER_MINUTES);
             return isBefore(current, eeWithBuffer) && isAfter(slotEnd, es);
           });
+          const slotWallStart = current;
+          const slotWallEnd = slotEnd;
+          const wallOverlapBreak = (bStart: string, bEnd: string) => {
+            const bs = new Date(`${dateStr}T${bStart.slice(0, 5)}:00`);
+            const be = new Date(`${dateStr}T${bEnd.slice(0, 5)}:00`);
+            return slotWallStart.getTime() < be.getTime() && slotWallEnd.getTime() > bs.getTime();
+          };
+
+          let staffBreakAllowsSlot = true;
+          if (staffOnlyBreaks.length > 0 && activeStaffAtLocation.size > 0) {
+            staffBreakAllowsSlot = [...activeStaffAtLocation].some((sid) =>
+              !staffOnlyBreaks.some((brk) => {
+                const ids = (brk.organization_break_slot_staff ?? []).map((x) => x.staff_id);
+                if (!ids.includes(sid)) return false;
+                return wallOverlapBreak(brk.start_time, brk.end_time);
+              })
+            );
+          }
+
           if (!isPast) {
             slots.push({
               time: format(current, "HH:mm"),
-              available: !bookingConflict && !gcalConflict,
+              available: !bookingConflict && !gcalConflict && staffBreakAllowsSlot,
             });
           }
           current = addMinutes(current, duration + BOOKING_SLOT_BUFFER_MINUTES);

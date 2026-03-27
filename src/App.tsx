@@ -13,6 +13,8 @@ import ResetPassword from "./pages/ResetPassword";
 import ConfirmPasswordChange from "./pages/ConfirmPasswordChange";
 import DashboardIndex from "./pages/dashboard/DashboardIndex";
 import Bookings from "./pages/dashboard/Bookings";
+import BookingsLayout from "./pages/dashboard/BookingsLayout";
+import BookingSettingsPage from "./pages/dashboard/BookingSettingsPage";
 import Locations from "./pages/dashboard/Locations";
 import Staff from "./pages/dashboard/Staff";
 import Services from "./pages/dashboard/Services";
@@ -60,7 +62,10 @@ const App = () => (
             >
               <Route index element={<DashboardIndex />} />
               <Route path="locations" element={<Locations />} />
-              <Route path="bookings" element={<Bookings />} />
+              <Route path="bookings" element={<BookingsLayout />}>
+                <Route index element={<Bookings />} />
+                <Route path="settings" element={<BookingSettingsPage />} />
+              </Route>
               <Route path="staff" element={<Staff />} />
               <Route path="services" element={<Services />} />
               <Route path="calendar" element={<CalendarPage />} />
