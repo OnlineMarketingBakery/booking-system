@@ -57,6 +57,7 @@ Use the real booking link for a test salon (your team will provide it). Complete
 - [ ] **Step 1 — Location:** You can choose a location (if there is more than one). If there is only one, the flow still makes sense.
 - [ ] **Step 2 — Services:** You can select one or more services. Prices and durations look correct.
 - [ ] **Step 3 — Time:** You can pick a **date** and a **time** that makes sense. Times that should not be offered (for example when the salon is closed, on a holiday, or during a break you configured) do **not** appear as available—or the calendar clearly blocks those days.
+- [ ] **Several staff at one location:** If the salon has **more than one** staff member, the **same time** can still be offered to new customers **until** each staff member already has someone booked for that time (for example with two staff, two different customers can book the same slot when nobody chose a specific staff member—or after one person chose staff A, another person can still book that time for staff B).
 - [ ] **Step 4 — Details:** **Phone number** and **full name** are required; the form explains what is missing if you try to continue without them.
 - [ ] Optional **email** field behaves as expected for your flows (some paths need email for confirmation or payment).
 - [ ] **Save my information** (if shown): Turning it on/off does not break the form; after a successful booking, returning customers may see fewer steps—confirm with your team what should happen.
@@ -107,6 +108,7 @@ The owner menu typically includes: Dashboard, Bookings (and Booking settings), L
 - [ ] **Break times:** You can add, edit, or remove break rules; saved rules still appear after refreshing the page. Public booking should **respect** these breaks (spot-check with a test time).
 - [ ] **Reminder emails:** Switches for **day before** and **one hour before** save correctly and stay as set after reload.
 - [ ] **Google Calendar:** **Connect** sends you through Google and returns with a success message; **Disconnect** works; **Sync existing bookings** runs and reports something sensible (or “nothing to sync” if appropriate).
+- [ ] When Google Calendar is connected and the calendar shows a **salon** Google event that is **only in Google** (not linked to a row in the app yet), clicking it allows **saving as a salon booking** or **removing** it from Google. **Personal or other Google meetings** (not created by this salon’s sync) still appear for context but **do not** open that dialog when clicked.
 
 ### Locations
 
@@ -126,6 +128,8 @@ The owner menu typically includes: Dashboard, Bookings (and Booking settings), L
 ### Calendar
 
 - [ ] The calendar shows bookings in the right **time slots** and **days**.
+- [ ] On the week view, each appointment block’s **height and position** match its real start and end time (for example a 9:45–10:15 booking reaches into the next hour row instead of staying squeezed in the 9:00 row only).
+- [ ] If **two or more bookings overlap in time** on the same day, they appear as **separate columns** next to each other (not one unreadable stack), and you can **open each** by clicking its own card.
 - [ ] Moving or editing from the calendar (if supported) updates the booking list and vice versa.
 
 ### Holidays and closed days

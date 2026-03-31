@@ -48,10 +48,128 @@ import {
   setMinutes,
   startOfDay,
   isBefore,
+  max,
+  min,
 } from "date-fns";
 import { toast } from "@/hooks/use-toast";
 
 const HOURS = Array.from({ length: 12 }, (_, i) => i + 8);
+const CAL_START_HOUR = HOURS[0];
+const CAL_END_HOUR = HOURS[HOURS.length - 1] + 1;
+/** Pixel height of one hour row (must match Tailwind h-[80px] on hour cells). */
+const HOUR_ROW_PX = 80;
+
+function dayColumnTimeRange(day: Date) {
+  const start = setMinutes(setHours(startOfDay(day), CAL_START_HOUR), 0);
+  const end = setMinutes(setHours(startOfDay(day), CAL_END_HOUR), 0);
+  return { start, end };
+}
+
+/** Whether the event should appear in this calendar day column and overlaps the visible time band. */
+function slotBelongsToCalendarDay(day: Date, start: Date, end: Date): boolean {
+  const day0 = startOfDay(day);
+  const day1 = addDays(day0, 1);
+  if (end <= day0 || start >= day1) return false;
+  const { start: bandStart, end: bandEnd } = dayColumnTimeRange(day);
+  const t0 = max([start, bandStart]);
+  const t1 = min([end, bandEnd]);
+  return t1 > t0;
+}
+
+/** Top offset and height in px for an event block inside the day column. */
+function layoutEventBlock(eventStart: Date, eventEnd: Date, day: Date): { top: number; height: number } | null {
+  const { start: colStart, end: colEnd } = dayColumnTimeRange(day);
+  const day0 = startOfDay(day);
+  const day1 = addDays(day0, 1);
+  const t0Ms = Math.max(eventStart.getTime(), colStart.getTime(), day0.getTime());
+  const t1Ms = Math.min(eventEnd.getTime(), colEnd.getTime(), day1.getTime());
+  if (t1Ms <= t0Ms) return null;
+  const msPerHour = 60 * 60 * 1000;
+  const topPx = ((t0Ms - colStart.getTime()) / msPerHour) * HOUR_ROW_PX;
+  const heightPx = Math.max(((t1Ms - t0Ms) / msPerHour) * HOUR_ROW_PX, 24);
+  return { top: topPx, height: heightPx };
+}
+
+/** True if two [start, end) intervals overlap (touching endpoints do not count). */
+function intervalsOverlapMs(aStart: number, aEnd: number, bStart: number, bEnd: number): boolean {
+  return aStart < bEnd && aEnd > bStart;
+}
+
+type OverlapLaneItem = { key: string; startMs: number; endMs: number };
+
+/**
+ * Groups events that overlap in time and assigns horizontal lanes (0..n-1) so each
+ * concurrent booking gets its own column within the overlap cluster.
+ */
+function assignOverlapLanes(items: OverlapLaneItem[]): Map<string, { lane: number; laneCount: number }> {
+  const result = new Map<string, { lane: number; laneCount: number }>();
+  const n = items.length;
+  if (n === 0) return result;
+
+  const adj: number[][] = Array.from({ length: n }, () => []);
+  for (let i = 0; i < n; i++) {
+    for (let j = i + 1; j < n; j++) {
+      if (intervalsOverlapMs(items[i].startMs, items[i].endMs, items[j].startMs, items[j].endMs)) {
+        adj[i].push(j);
+        adj[j].push(i);
+      }
+    }
+  }
+
+  const visited = new Array(n).fill(false);
+
+  for (let s = 0; s < n; s++) {
+    if (visited[s]) continue;
+    const comp: number[] = [];
+    const stack = [s];
+    visited[s] = true;
+    while (stack.length) {
+      const u = stack.pop()!;
+      comp.push(u);
+      for (const v of adj[u]) {
+        if (!visited[v]) {
+          visited[v] = true;
+          stack.push(v);
+        }
+      }
+    }
+
+    comp.sort((a, b) => {
+      const ds = items[a].startMs - items[b].startMs;
+      if (ds !== 0) return ds;
+      return items[b].endMs - items[a].endMs;
+    });
+
+    const colEnds: number[] = [];
+    const laneByIdx = new Map<number, number>();
+
+    for (const idx of comp) {
+      const e = items[idx];
+      let lane = -1;
+      for (let c = 0; c < colEnds.length; c++) {
+        if (colEnds[c] <= e.startMs) {
+          lane = c;
+          break;
+        }
+      }
+      if (lane >= 0) {
+        colEnds[lane] = e.endMs;
+        laneByIdx.set(idx, lane);
+      } else {
+        colEnds.push(e.endMs);
+        laneByIdx.set(idx, colEnds.length - 1);
+      }
+    }
+
+    const laneCount = Math.max(1, colEnds.length);
+    for (const idx of comp) {
+      const lane = laneByIdx.get(idx) ?? 0;
+      result.set(items[idx].key, { lane, laneCount });
+    }
+  }
+
+  return result;
+}
 
 const BOOKING_STATUS_COLORS: Record<string, string> = {
   pending: "bg-warning/20 text-warning-foreground border-warning/30",
@@ -72,6 +190,338 @@ type SlotSource = "booking" | "gcal";
 
 function getSlotKey(s: { id: string; source: SlotSource }) {
   return `${s.source}-${s.id}`;
+}
+
+type CalendarSlot = {
+  id: string;
+  source: SlotSource;
+  summary: string;
+  start: string;
+  end: string;
+  bookingId?: string;
+  locationId?: string;
+  /** From Google Calendar private extendedProperties when the event was created/synced by this app. */
+  organizationId?: string;
+};
+
+/** Only salon-synced GCal events carry organization_id (or legacy booking_id for this org); personal meetings do not. */
+function isSalonOriginGcalSlot(s: CalendarSlot, currentOrganizationId: string): boolean {
+  if (s.source !== "gcal") return true;
+  if (!currentOrganizationId) return false;
+  if (
+    s.organizationId != null &&
+    String(s.organizationId).length > 0 &&
+    String(s.organizationId) === String(currentOrganizationId)
+  ) {
+    return true;
+  }
+  return false;
+}
+
+function collectSlotsForCalendarDay(
+  day: Date,
+  locationId: string,
+  orgBookings: any[],
+  gcalConnected: boolean,
+  gcalEvents: any[],
+  firstLocationId: string,
+): CalendarSlot[] {
+  const slots: CalendarSlot[] = [];
+
+  if (gcalConnected) {
+    for (const e of gcalEvents || []) {
+      if (!e.start) continue;
+      const eStart = new Date(e.start);
+      const eEnd = new Date(e.end || e.start);
+      if (!slotBelongsToCalendarDay(day, eStart, eEnd)) continue;
+      if (locationId && e.location_id != null && String(e.location_id) !== String(locationId)) continue;
+      if (
+        locationId &&
+        (e.location_id == null || e.location_id === "") &&
+        firstLocationId &&
+        String(locationId) !== String(firstLocationId)
+      )
+        continue;
+      slots.push({
+        id: e.id || `gcal-${e.start}`,
+        source: "gcal",
+        summary: e.summary || "Event",
+        start: e.start,
+        end: e.end || e.start,
+        bookingId: e.booking_id || undefined,
+        locationId: e.location_id ?? undefined,
+        organizationId: e.organization_id ?? undefined,
+      });
+    }
+    return slots;
+  }
+
+  const bookingsForThisLocation = locationId
+    ? orgBookings.filter((b: any) => String(b.location_id) === String(locationId))
+    : orgBookings;
+
+  for (const b of bookingsForThisLocation) {
+    const start = new Date(b.start_time);
+    const end = new Date(b.end_time);
+    if (!slotBelongsToCalendarDay(day, start, end)) continue;
+    const svc = b.services as { name?: string } | null;
+    const staffName = (b.staff as { name?: string } | null)?.name;
+    slots.push({
+      id: b.id,
+      source: "booking",
+      summary: [b.customer_name, svc?.name, staffName].filter(Boolean).join(" · ") || "Booking",
+      start: b.start_time,
+      end: b.end_time,
+    });
+  }
+  return slots;
+}
+
+function resolveBookingForSlot(
+  s: { source: SlotSource; id: string; bookingId?: string; start: string; locationId?: string },
+  orgBookings: any[],
+): any | null {
+  if (s.source === "booking") {
+    return orgBookings.find((b: any) => b.id === s.id) ?? null;
+  }
+  if (s.source === "gcal") {
+    if (s.bookingId) return orgBookings.find((b: any) => b.id === s.bookingId) ?? null;
+    const byGcal = orgBookings.find((b: any) => b.gcal_event_id === s.id);
+    if (byGcal) return byGcal;
+    if (s.start && s.locationId) {
+      return (
+        orgBookings.find(
+          (b: any) =>
+            String(b.location_id) === String(s.locationId) &&
+            Math.abs(new Date(b.start_time).getTime() - new Date(s.start).getTime()) < 60000,
+        ) ?? null
+      );
+    }
+    return null;
+  }
+  return null;
+}
+
+type CalendarWeekGridProps = {
+  weekDays: Date[];
+  orgBookings: any[];
+  gcalEvents: any[];
+  gcalConnected: boolean;
+  locationId: string;
+  firstLocationId: string;
+  organizationId: string;
+  onAddBooking: (day: Date, hour: number) => void;
+  onSelectBooking: (booking: any) => void;
+  onSelectOrphanGcal: (ev: { id: string; summary: string; start: string; end: string }) => void;
+};
+
+function CalendarWeekGrid({
+  weekDays,
+  orgBookings,
+  gcalEvents,
+  gcalConnected,
+  locationId,
+  firstLocationId,
+  organizationId,
+  onAddBooking,
+  onSelectBooking,
+  onSelectOrphanGcal,
+}: CalendarWeekGridProps) {
+  return (
+    <div className="overflow-hidden w-full">
+      <div className="min-w-0">
+        <div className="grid grid-cols-[60px_repeat(7,minmax(0,1fr))] border-b">
+          <div className="p-2 shrink-0" />
+          {weekDays.map((day) => (
+            <div
+              key={day.toISOString()}
+              className={`p-2 text-center border-l min-w-0 ${isSameDay(day, new Date()) ? "bg-primary/5" : ""}`}
+            >
+              <p className="text-xs text-muted-foreground">{format(day, "EEE")}</p>
+              <p className={`text-lg font-semibold ${isSameDay(day, new Date()) ? "text-primary" : ""}`}>
+                {format(day, "d")}
+              </p>
+            </div>
+          ))}
+        </div>
+        <div className="grid grid-cols-[60px_repeat(7,minmax(0,1fr))]">
+          <div className="flex flex-col shrink-0 border-b">
+            {HOURS.map((hour) => (
+              <div
+                key={hour}
+                className="box-border border-b text-xs text-muted-foreground text-right pr-2 pt-1 shrink-0"
+                style={{ height: HOUR_ROW_PX }}
+              >
+                {format(setHours(new Date(), hour), "h a")}
+              </div>
+            ))}
+          </div>
+          {weekDays.map((day) => {
+            const slots = collectSlotsForCalendarDay(
+              day,
+              locationId,
+              orgBookings,
+              gcalConnected,
+              gcalEvents,
+              firstLocationId,
+            );
+
+            const overlapItems: OverlapLaneItem[] = [];
+            for (const s of slots) {
+              const endDate = new Date(s.end || s.start);
+              const layout = layoutEventBlock(new Date(s.start), endDate, day);
+              if (!layout) continue;
+              let startMs = new Date(s.start).getTime();
+              let endMs = new Date(s.end || s.start).getTime();
+              if (endMs <= startMs) endMs = startMs + 60 * 1000;
+              overlapItems.push({ key: getSlotKey(s), startMs, endMs });
+            }
+            const laneByKey = assignOverlapLanes(overlapItems);
+
+            return (
+              <div
+                key={day.toISOString()}
+                className="relative border-l min-w-0 border-b"
+                style={{ height: HOURS.length * HOUR_ROW_PX }}
+              >
+                {HOURS.map((hour) => {
+                  const slotTime = setMinutes(setHours(startOfDay(day), hour), 0);
+                  const isPastSlot = isBefore(slotTime, new Date());
+                  const top = (hour - CAL_START_HOUR) * HOUR_ROW_PX;
+                  return (
+                    <div
+                      key={hour}
+                      role={isPastSlot ? undefined : "button"}
+                      tabIndex={isPastSlot ? undefined : 0}
+                      onClick={isPastSlot ? undefined : () => onAddBooking(day, hour)}
+                      onKeyDown={
+                        isPastSlot ? undefined : (e) => e.key === "Enter" && onAddBooking(day, hour)
+                      }
+                      style={{ top, height: HOUR_ROW_PX }}
+                      className={`absolute left-0 right-0 box-border border-b p-1 ${
+                        isPastSlot
+                          ? "cursor-not-allowed bg-muted/30 opacity-75"
+                          : "cursor-pointer transition-colors hover:bg-primary/10 focus:outline-none focus:ring-1 focus:ring-ring focus:ring-inset"
+                      } ${isSameDay(day, new Date()) && !isPastSlot ? "bg-primary/5" : ""} ${
+                        isSameDay(day, new Date()) && isPastSlot ? "bg-muted/20" : ""
+                      }`}
+                    />
+                  );
+                })}
+                <div className="pointer-events-none absolute inset-0 z-[1] overflow-visible">
+                  {slots.map((s) => {
+                    const endDate = new Date(s.end || s.start);
+                    const layout = layoutEventBlock(new Date(s.start), endDate, day);
+                    if (!layout) return null;
+                    const { lane, laneCount } = laneByKey.get(getSlotKey(s)) ?? {
+                      lane: 0,
+                      laneCount: 1,
+                    };
+                    const gapPx = 2;
+                    const pct = 100 / laneCount;
+                    const leftCalc = `calc(${lane * pct}% + ${gapPx / 2}px)`;
+                    const widthCalc = `calc(${pct}% - ${gapPx}px)`;
+
+                    const booking = resolveBookingForSlot(s, orgBookings);
+                    const isManageable = !!booking;
+                    const isOrphanGcal = s.source === "gcal" && !booking;
+                    const orphanIsSalonScoped = isOrphanGcal && isSalonOriginGcalSlot(s, organizationId);
+                    const isOtherGoogleEvent = isOrphanGcal && !orphanIsSalonScoped;
+                    const isClickable = isManageable || orphanIsSalonScoped;
+                    const tooltipContent = booking
+                      ? `${booking.customer_name}${(booking.services as { name?: string })?.name ? ` · ${(booking.services as { name?: string }).name}` : ""}${(booking.staff as { name?: string })?.name ? ` · ${(booking.staff as { name?: string }).name}` : ""}\n${format(new Date(booking.start_time), "MMM d, h:mm a")} – ${format(new Date(booking.end_time), "h:mm a")}${booking.notes ? `\n${booking.notes}` : ""}`
+                      : `${s.summary}\n${format(new Date(s.start), "MMM d, h:mm a")}${s.end ? ` – ${format(new Date(s.end), "h:mm a")}` : ""}`;
+                    const statusTone =
+                      isManageable && booking
+                        ? BOOKING_STATUS_COLORS[booking.status] ?? BOOKING_STATUS_COLORS.confirmed
+                        : "";
+
+                    const cardInner = (
+                      <>
+                        <p className="min-h-0 truncate font-medium leading-tight">{s.summary}</p>
+                        <p className="truncate text-[10px] leading-tight text-muted-foreground sm:text-xs">
+                          {format(new Date(s.start), "h:mm a")}
+                          {s.end ? ` — ${format(new Date(s.end), "h:mm a")}` : ""}
+                        </p>
+                      </>
+                    );
+
+                    const cardStyle = {
+                      top: layout.top,
+                      height: layout.height,
+                      left: leftCalc,
+                      width: widthCalc,
+                    };
+
+                    if (isOtherGoogleEvent) {
+                      return (
+                        <div
+                          key={getSlotKey(s)}
+                          title={`${s.summary} (${format(new Date(s.start), "MMM d, h:mm a")}) — Google only, not a salon booking`}
+                          style={cardStyle}
+                          className="pointer-events-none absolute box-border flex min-h-0 flex-col justify-start overflow-hidden rounded-md border border-dashed border-muted-foreground/40 bg-muted/40 p-1 text-xs text-muted-foreground shadow-sm"
+                        >
+                          {cardInner}
+                        </div>
+                      );
+                    }
+
+                    return (
+                      <Tooltip key={getSlotKey(s)} delayDuration={300}>
+                        <TooltipTrigger asChild>
+                          <div
+                            role={isClickable ? "button" : undefined}
+                            tabIndex={isClickable ? 0 : undefined}
+                            style={cardStyle}
+                            className={`pointer-events-auto absolute box-border flex min-h-0 flex-col justify-start overflow-hidden rounded-md border p-1 text-xs shadow-sm ${
+                              isManageable
+                                ? `${statusTone} cursor-pointer transition-opacity hover:opacity-90 focus:outline-none focus:ring-1 focus:ring-ring`
+                                : orphanIsSalonScoped
+                                  ? "cursor-pointer border-border bg-muted transition-colors hover:bg-muted/80 focus:outline-none focus:ring-1 focus:ring-ring"
+                                  : "border-border bg-muted"
+                            }`}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              if (booking) onSelectBooking(booking);
+                              else if (orphanIsSalonScoped)
+                                onSelectOrphanGcal({
+                                  id: s.id,
+                                  summary: s.summary,
+                                  start: s.start,
+                                  end: s.end || s.start,
+                                });
+                            }}
+                            onKeyDown={(e) => {
+                              if (isClickable && e.key === "Enter") {
+                                e.stopPropagation();
+                                if (booking) onSelectBooking(booking);
+                                else if (orphanIsSalonScoped)
+                                  onSelectOrphanGcal({
+                                    id: s.id,
+                                    summary: s.summary,
+                                    start: s.start,
+                                    end: s.end || s.start,
+                                  });
+                              }
+                            }}
+                          >
+                            {cardInner}
+                          </div>
+                        </TooltipTrigger>
+                        <TooltipContent side="top" className="max-w-[280px] whitespace-pre-line text-xs">
+                          {tooltipContent}
+                        </TooltipContent>
+                      </Tooltip>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
 }
 
 export default function CalendarPage() {
@@ -194,53 +644,6 @@ export default function CalendarPage() {
     Promise.all([p1, p2]).finally(() => setRefreshingAfterNavigate(false));
   }, [organization?.id, gcalConnected]);
 
-  // When GCal connected: show only synced GCal events (existing bookings are backfilled on connect).
-  // When not connected: DB bookings only.
-  const getSlotsForDayHour = (day: Date, hour: number, locationId: string): { id: string; source: SlotSource; summary: string; start: string; end: string; bookingId?: string; locationId?: string }[] => {
-    const slots: { id: string; source: SlotSource; summary: string; start: string; end: string; bookingId?: string; locationId?: string }[] = [];
-
-    if (gcalConnected && gcalEvents) {
-      gcalEvents.forEach((e: any) => {
-        if (!e.start) return;
-        const eDate = new Date(e.start);
-        if (!isSameDay(eDate, day) || eDate.getHours() !== hour) return;
-        if (locationId && e.location_id != null && String(e.location_id) !== String(locationId)) return;
-        if (locationId && (e.location_id == null || e.location_id === "") && firstLocationId && String(locationId) !== String(firstLocationId)) return;
-        slots.push({
-          id: e.id || `gcal-${e.start}`,
-          source: "gcal",
-          summary: e.summary || "Event",
-          start: e.start,
-          end: e.end || e.start,
-          bookingId: e.booking_id || undefined,
-          locationId: e.location_id ?? undefined,
-        });
-      });
-      return slots;
-    }
-
-    // No GCal: use custom (DB) bookings only, filtered by location
-    const bookingsForThisLocation =
-      locationId
-        ? orgBookings.filter((b: any) => String(b.location_id) === String(locationId))
-        : orgBookings;
-    bookingsForThisLocation.forEach((b: any) => {
-      const start = new Date(b.start_time);
-      if (isSameDay(start, day) && start.getHours() === hour) {
-        const svc = b.services as { name?: string } | null;
-        const staffName = (b.staff as { name?: string } | null)?.name;
-        slots.push({
-          id: b.id,
-          source: "booking",
-          summary: [b.customer_name, svc?.name, staffName].filter(Boolean).join(" · ") || "Booking",
-          start: b.start_time,
-          end: b.end_time,
-        });
-      }
-    });
-    return slots;
-  };
-
   const openAddBooking = (day?: Date, hour?: number) => {
     if (day != null && hour != null) {
       const start = setMinutes(setHours(startOfDay(day), hour), 0);
@@ -325,108 +728,19 @@ export default function CalendarPage() {
               <Loader2 className="h-6 w-6 animate-spin text-primary" />
             </div>
           ) : (
-            <div className="overflow-hidden w-full" key={effectiveLocationId}>
-              <div className="min-w-0">
-                <div className="grid grid-cols-[60px_repeat(7,minmax(0,1fr))] border-b">
-                  <div className="p-2 shrink-0" />
-                  {weekDays.map((day) => (
-                    <div
-                      key={day.toISOString()}
-                      className={`p-2 text-center border-l min-w-0 ${isSameDay(day, new Date()) ? "bg-primary/5" : ""}`}
-                    >
-                      <p className="text-xs text-muted-foreground">{format(day, "EEE")}</p>
-                      <p className={`text-lg font-semibold ${isSameDay(day, new Date()) ? "text-primary" : ""}`}>
-                        {format(day, "d")}
-                      </p>
-                    </div>
-                  ))}
-                </div>
-                {HOURS.map((hour) => (
-                  <div key={hour} className="grid grid-cols-[60px_repeat(7,minmax(0,1fr))] border-b min-h-[80px]">
-                    <div className="p-1 text-xs text-muted-foreground text-right pr-2 pt-1 shrink-0">
-                      {format(setHours(new Date(), hour), "h a")}
-                    </div>
-                    {weekDays.map((day) => {
-                      const daySlots = getSlotsForDayHour(day, hour, effectiveLocationId || "");
-                      const slotTime = setMinutes(setHours(startOfDay(day), hour), 0);
-                      const isPastSlot = isBefore(slotTime, new Date());
-                      return (
-                        <div
-                          key={day.toISOString() + hour}
-                          role={isPastSlot ? undefined : "button"}
-                          tabIndex={isPastSlot ? undefined : 0}
-                          onClick={isPastSlot ? undefined : () => openAddBooking(day, hour)}
-                          onKeyDown={isPastSlot ? undefined : (e) => e.key === "Enter" && openAddBooking(day, hour)}
-                          className={`border-l p-1 text-left min-h-[80px] min-w-0 overflow-hidden rounded-none ${isPastSlot ? "cursor-not-allowed opacity-75 bg-muted/30" : "cursor-pointer transition-colors hover:bg-primary/10 focus:outline-none focus:ring-1 focus:ring-ring focus:ring-inset"} ${isSameDay(day, new Date()) && !isPastSlot ? "bg-primary/5" : ""} ${isSameDay(day, new Date()) && isPastSlot ? "bg-muted/20" : ""}`}
-                        >
-                          {daySlots.map((s) => {
-                              const booking =
-                                s.source === "booking"
-                                  ? orgBookings.find((b: any) => b.id === s.id)
-                                  : s.source === "gcal"
-                                    ? (s.bookingId
-                                        ? orgBookings.find((b: any) => b.id === s.bookingId)
-                                        : orgBookings.find((b: any) => b.gcal_event_id === s.id) ??
-                                          (s.start && s.locationId
-                                            ? orgBookings.find(
-                                                (b: any) =>
-                                                  String(b.location_id) === String(s.locationId) &&
-                                                  Math.abs(new Date(b.start_time).getTime() - new Date(s.start).getTime()) < 60000
-                                              )
-                                            : null))
-                                    : null;
-                              const isManageable = !!booking;
-                              const isOrphanGcal = s.source === "gcal" && !booking;
-                              const isClickable = isManageable || isOrphanGcal;
-                              const tooltipContent = booking
-                                ? `${booking.customer_name}${(booking.services as { name?: string })?.name ? ` · ${(booking.services as { name?: string }).name}` : ""}${(booking.staff as { name?: string })?.name ? ` · ${(booking.staff as { name?: string }).name}` : ""}\n${format(new Date(booking.start_time), "MMM d, h:mm a")} – ${format(new Date(booking.end_time), "h:mm a")}${booking.notes ? `\n${booking.notes}` : ""}`
-                                : `${s.summary}\n${format(new Date(s.start), "MMM d, h:mm a")}${s.end ? ` – ${format(new Date(s.end), "h:mm a")}` : ""}`;
-                              return (
-                                <Tooltip key={getSlotKey(s)} delayDuration={300}>
-                                  <TooltipTrigger asChild>
-                                    <div
-                                      role={isClickable ? "button" : undefined}
-                                      tabIndex={isClickable ? 0 : undefined}
-                                      className={`rounded-md border p-1.5 mb-1 text-xs shadow-sm min-w-0 overflow-hidden ${
-                                        isManageable
-                                          ? "bg-primary/10 border-primary/20 cursor-pointer hover:bg-primary/20 transition-colors focus:outline-none focus:ring-1 focus:ring-ring"
-                                          : isOrphanGcal
-                                            ? "bg-muted border-border cursor-pointer hover:bg-muted/80 transition-colors focus:outline-none focus:ring-1 focus:ring-ring"
-                                            : "bg-muted border-border"
-                                      }`}
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        if (booking) setSelectedBooking(booking);
-                                        else if (isOrphanGcal) setSelectedOrphanGcalEvent({ id: s.id, summary: s.summary, start: s.start, end: s.end || s.start });
-                                      }}
-                                      onKeyDown={(e) => {
-                                        if (isClickable && e.key === "Enter") {
-                                          e.stopPropagation();
-                                          if (booking) setSelectedBooking(booking);
-                                          else if (isOrphanGcal) setSelectedOrphanGcalEvent({ id: s.id, summary: s.summary, start: s.start, end: s.end || s.start });
-                                        }
-                                      }}
-                                    >
-                                      <p className="font-medium truncate">{s.summary}</p>
-                                      <p className="text-muted-foreground truncate">
-                                        {format(new Date(s.start), "h:mm a")}
-                                        {s.end ? ` — ${format(new Date(s.end), "h:mm a")}` : ""}
-                                      </p>
-                                    </div>
-                                  </TooltipTrigger>
-                                  <TooltipContent side="top" className="max-w-[280px] whitespace-pre-line text-xs">
-                                    {tooltipContent}
-                                  </TooltipContent>
-                                </Tooltip>
-                              );
-                            })}
-                        </div>
-                      );
-                    })}
-                  </div>
-                ))}
-              </div>
-            </div>
+            <CalendarWeekGrid
+              key={effectiveLocationId}
+              weekDays={weekDays}
+              orgBookings={orgBookings}
+              gcalEvents={gcalEvents}
+              gcalConnected={!!gcalConnected}
+              locationId={effectiveLocationId || ""}
+              firstLocationId={firstLocationId}
+              organizationId={organization?.id ?? ""}
+              onAddBooking={(day, hour) => openAddBooking(day, hour)}
+              onSelectBooking={setSelectedBooking}
+              onSelectOrphanGcal={setSelectedOrphanGcalEvent}
+            />
           )}
         </>
       )}
@@ -439,121 +753,41 @@ export default function CalendarPage() {
               <Loader2 className="h-6 w-6 animate-spin text-primary" />
             </div>
           ) : (
-            <div className="overflow-hidden w-full">
-              <div className="min-w-0">
-                <div className="grid grid-cols-[60px_repeat(7,minmax(0,1fr))] border-b">
-                  <div className="p-2 shrink-0" />
-                  {weekDays.map((day) => (
-                    <div
-                      key={day.toISOString()}
-                      className={`p-2 text-center border-l min-w-0 ${isSameDay(day, new Date()) ? "bg-primary/5" : ""}`}
-                    >
-                      <p className="text-xs text-muted-foreground">{format(day, "EEE")}</p>
-                      <p className={`text-lg font-semibold ${isSameDay(day, new Date()) ? "text-primary" : ""}`}>
-                        {format(day, "d")}
-                      </p>
-                    </div>
-                  ))}
-                </div>
-                {HOURS.map((hour) => (
-                  <div key={hour} className="grid grid-cols-[60px_repeat(7,minmax(0,1fr))] border-b min-h-[80px]">
-                    <div className="p-1 text-xs text-muted-foreground text-right pr-2 pt-1 shrink-0">
-                      {format(setHours(new Date(), hour), "h a")}
-                    </div>
-                    {weekDays.map((day) => {
-                      const daySlots = getSlotsForDayHour(day, hour, "");
-                      const slotTime = setMinutes(setHours(startOfDay(day), hour), 0);
-                      const isPastSlot = isBefore(slotTime, new Date());
-                      return (
-                        <div
-                          key={day.toISOString() + hour}
-                          role={isPastSlot ? undefined : "button"}
-                          tabIndex={isPastSlot ? undefined : 0}
-                          onClick={isPastSlot ? undefined : () => openAddBooking(day, hour)}
-                          onKeyDown={isPastSlot ? undefined : (e) => e.key === "Enter" && openAddBooking(day, hour)}
-                          className={`border-l p-1 text-left min-h-[80px] min-w-0 overflow-hidden rounded-none ${isPastSlot ? "cursor-not-allowed opacity-75 bg-muted/30" : "cursor-pointer transition-colors hover:bg-primary/10 focus:outline-none focus:ring-1 focus:ring-ring focus:ring-inset"} ${isSameDay(day, new Date()) && !isPastSlot ? "bg-primary/5" : ""} ${isSameDay(day, new Date()) && isPastSlot ? "bg-muted/20" : ""}`}
-                        >
-                          {daySlots.map((s) => {
-                              const booking =
-                                s.source === "booking"
-                                  ? orgBookings.find((b: any) => b.id === s.id)
-                                  : s.source === "gcal"
-                                    ? (s.bookingId
-                                        ? orgBookings.find((b: any) => b.id === s.bookingId)
-                                        : orgBookings.find((b: any) => b.gcal_event_id === s.id) ??
-                                          (s.start && s.locationId
-                                            ? orgBookings.find(
-                                                (b: any) =>
-                                                  String(b.location_id) === String(s.locationId) &&
-                                                  Math.abs(new Date(b.start_time).getTime() - new Date(s.start).getTime()) < 60000
-                                              )
-                                            : null))
-                                    : null;
-                              const isManageable = !!booking;
-                              const isOrphanGcal = s.source === "gcal" && !booking;
-                              const isClickable = isManageable || isOrphanGcal;
-                              const tooltipContent = booking
-                                ? `${booking.customer_name}${(booking.services as { name?: string })?.name ? ` · ${(booking.services as { name?: string }).name}` : ""}${(booking.staff as { name?: string })?.name ? ` · ${(booking.staff as { name?: string }).name}` : ""}\n${format(new Date(booking.start_time), "MMM d, h:mm a")} – ${format(new Date(booking.end_time), "h:mm a")}${booking.notes ? `\n${booking.notes}` : ""}`
-                                : `${s.summary}\n${format(new Date(s.start), "MMM d, h:mm a")}${s.end ? ` – ${format(new Date(s.end), "h:mm a")}` : ""}`;
-                              return (
-                                <Tooltip key={getSlotKey(s)} delayDuration={300}>
-                                  <TooltipTrigger asChild>
-                                    <div
-                                      role={isClickable ? "button" : undefined}
-                                      tabIndex={isClickable ? 0 : undefined}
-                                      className={`rounded-md border p-1.5 mb-1 text-xs shadow-sm min-w-0 overflow-hidden ${
-                                        isManageable
-                                          ? "bg-primary/10 border-primary/20 cursor-pointer hover:bg-primary/20 transition-colors focus:outline-none focus:ring-1 focus:ring-ring"
-                                          : isOrphanGcal
-                                            ? "bg-muted border-border cursor-pointer hover:bg-muted/80 transition-colors focus:outline-none focus:ring-1 focus:ring-ring"
-                                            : "bg-muted border-border"
-                                      }`}
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        if (booking) setSelectedBooking(booking);
-                                        else if (isOrphanGcal) setSelectedOrphanGcalEvent({ id: s.id, summary: s.summary, start: s.start, end: s.end || s.start });
-                                      }}
-                                      onKeyDown={(e) => {
-                                        if (isClickable && e.key === "Enter") {
-                                          e.stopPropagation();
-                                          if (booking) setSelectedBooking(booking);
-                                          else if (isOrphanGcal) setSelectedOrphanGcalEvent({ id: s.id, summary: s.summary, start: s.start, end: s.end || s.start });
-                                        }
-                                      }}
-                                    >
-                                      <p className="font-medium truncate">{s.summary}</p>
-                                      <p className="text-muted-foreground truncate">
-                                        {format(new Date(s.start), "h:mm a")}
-                                        {s.end ? ` — ${format(new Date(s.end), "h:mm a")}` : ""}
-                                      </p>
-                                    </div>
-                                  </TooltipTrigger>
-                                  <TooltipContent side="top" className="max-w-[280px] whitespace-pre-line text-xs">
-                                    {tooltipContent}
-                                  </TooltipContent>
-                                </Tooltip>
-                              );
-                            })}
-                        </div>
-                      );
-                    })}
-                  </div>
-                ))}
-              </div>
-            </div>
+            <CalendarWeekGrid
+              weekDays={weekDays}
+              orgBookings={orgBookings}
+              gcalEvents={gcalEvents}
+              gcalConnected={!!gcalConnected}
+              locationId=""
+              firstLocationId={firstLocationId}
+              organizationId={organization?.id ?? ""}
+              onAddBooking={(day, hour) => openAddBooking(day, hour)}
+              onSelectBooking={setSelectedBooking}
+              onSelectOrphanGcal={setSelectedOrphanGcalEvent}
+            />
           )}
         </>
       )}
 
-      <RemoveGcalEventDialog
+      <OrphanGcalEventDialog
         event={selectedOrphanGcalEvent}
         open={!!selectedOrphanGcalEvent}
         onOpenChange={(open) => !open && setSelectedOrphanGcalEvent(null)}
         userId={user?.id ?? ""}
-        onSuccess={() => {
+        organizationId={organization?.id ?? ""}
+        defaultLocationId={effectiveLocationId || ""}
+        onRemoveSuccess={() => {
           queryClient.invalidateQueries({ queryKey: ["gcal-events"] });
           refetchGcal();
           setSelectedOrphanGcalEvent(null);
+        }}
+        onLinked={(booking) => {
+          queryClient.invalidateQueries({ queryKey: ["calendar-bookings"] });
+          queryClient.invalidateQueries({ queryKey: ["all-bookings"] });
+          queryClient.invalidateQueries({ queryKey: ["gcal-events"] });
+          refetchGcal();
+          setSelectedOrphanGcalEvent(null);
+          setSelectedBooking(booking);
         }}
       />
 
@@ -1022,16 +1256,188 @@ function AddBookingDialog({
   );
 }
 
-type RemoveGcalEventDialogProps = {
+function prefillNamePartsFromGcalSummary(summary: string): { first: string; last: string } {
+  const emSplit = summary.split(/\s*[—–]\s*/);
+  let namePart = emSplit.length >= 2 ? emSplit.slice(0, -1).join(" ").trim() : summary.trim();
+  if (emSplit.length < 2) {
+    const hySplit = namePart.split(/\s+\-\s+/);
+    if (hySplit.length >= 2) {
+      namePart = hySplit.slice(0, -1).join(" - ").trim();
+    }
+  }
+  const parts = namePart.split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return { first: "", last: "" };
+  if (parts.length === 1) return { first: parts[0], last: "" };
+  return { first: parts[0], last: parts.slice(1).join(" ") };
+}
+
+type OrphanGcalEventDialogProps = {
   event: { id: string; summary: string; start: string; end: string } | null;
   open: boolean;
   onOpenChange: (open: boolean) => void;
   userId: string;
-  onSuccess: () => void;
+  organizationId: string;
+  defaultLocationId: string;
+  onRemoveSuccess: () => void;
+  onLinked: (booking: any) => void;
 };
 
-function RemoveGcalEventDialog({ event, open, onOpenChange, userId, onSuccess }: RemoveGcalEventDialogProps) {
+const ORPHAN_STAFF_ANY = "__any__";
+
+function OrphanGcalEventDialog({
+  event,
+  open,
+  onOpenChange,
+  userId,
+  organizationId,
+  defaultLocationId,
+  onRemoveSuccess,
+  onLinked,
+}: OrphanGcalEventDialogProps) {
+  const queryClient = useQueryClient();
   const [removing, setRemoving] = useState(false);
+  const [locationId, setLocationId] = useState("");
+  const [serviceId, setServiceId] = useState("");
+  const [staffId, setStaffId] = useState<string>(ORPHAN_STAFF_ANY);
+  const [customerFirstName, setCustomerFirstName] = useState("");
+  const [customerLastName, setCustomerLastName] = useState("");
+  const [customerEmail, setCustomerEmail] = useState("");
+  const [customerPhone, setCustomerPhone] = useState("");
+  const [startDate, setStartDate] = useState<Date>(() => new Date());
+  const [startTime, setStartTime] = useState("09:00");
+  const [notes, setNotes] = useState("");
+
+  useEffect(() => {
+    if (!open || !event) return;
+    const { first, last } = prefillNamePartsFromGcalSummary(event.summary);
+    setCustomerFirstName(first);
+    setCustomerLastName(last);
+    setCustomerEmail("");
+    setCustomerPhone("");
+    setNotes("");
+    const s = new Date(event.start);
+    setStartDate(s);
+    setStartTime(format(s, "HH:mm"));
+    setServiceId("");
+    setStaffId(ORPHAN_STAFF_ANY);
+    setLocationId(defaultLocationId || "");
+  }, [open, event, defaultLocationId]);
+
+  const { data: locations = [] } = useQuery({
+    queryKey: ["orphan-gcal-locations", organizationId],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("locations")
+        .select("id, name")
+        .eq("organization_id", organizationId)
+        .eq("is_active", true)
+        .order("name");
+      if (error) throw error;
+      return data ?? [];
+    },
+    enabled: !!organizationId && open,
+  });
+
+  const { data: services = [] } = useQuery({
+    queryKey: ["orphan-gcal-services", organizationId],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("services")
+        .select("*")
+        .eq("organization_id", organizationId)
+        .eq("is_active", true);
+      if (error) throw error;
+      return data ?? [];
+    },
+    enabled: !!organizationId && open,
+  });
+
+  const { data: staffForLocation = [] } = useQuery({
+    queryKey: ["orphan-gcal-staff", locationId],
+    queryFn: async () => {
+      const { data: sl, error } = await supabase.from("staff_locations").select("staff_id").eq("location_id", locationId);
+      if (error) throw error;
+      const ids = (sl || []).map((r) => r.staff_id);
+      if (ids.length === 0) return [];
+      const { data: staff, error: staffErr } = await supabase
+        .from("staff")
+        .select("id, name")
+        .in("id", ids)
+        .eq("is_active", true);
+      if (staffErr) throw staffErr;
+      return staff ?? [];
+    },
+    enabled: !!locationId && open,
+  });
+
+  const selectedService = useMemo(() => services.find((s) => s.id === serviceId), [services, serviceId]);
+
+  const linkMutation = useMutation({
+    mutationFn: async () => {
+      if (!event || !organizationId) throw new Error("Missing event or organization");
+      const [h, m] = startTime.split(":").map(Number);
+      const start = new Date(startDate);
+      start.setHours(h, m, 0, 0);
+      const durationMin = selectedService?.duration_minutes ?? 30;
+      const end = new Date(start.getTime() + durationMin * 60000);
+      const customerName = [customerFirstName.trim(), customerLastName.trim()].filter(Boolean).join(" ").trim();
+      const row = {
+        organization_id: organizationId,
+        location_id: locationId,
+        service_id: serviceId,
+        staff_id: staffId && staffId !== ORPHAN_STAFF_ANY ? staffId : null,
+        customer_name: customerName,
+        customer_email: customerEmail.trim().toLowerCase(),
+        customer_phone: customerPhone.trim() || null,
+        start_time: start.toISOString(),
+        end_time: end.toISOString(),
+        status: "confirmed" as const,
+        gcal_event_id: event.id,
+        notes: notes.trim() || null,
+        customer_slot_date: format(start, "yyyy-MM-dd"),
+        customer_slot_time: format(start, "HH:mm"),
+      };
+      const { data, error } = await supabase
+        .from("bookings")
+        .insert(row)
+        .select("*, services(name, duration_minutes), staff(name), locations(name), gcal_event_id")
+        .single();
+      if (error) throw error;
+      const { error: fnErr } = await supabase.functions.invoke("sync-booking-to-gcal", {
+        body: { booking_id: data.id },
+      });
+      if (fnErr) {
+        console.error("sync-booking-to-gcal after link:", fnErr);
+        toast({
+          title: "Booking saved",
+          description: "Could not update Google Calendar from the server. You can try again from the booking details.",
+          variant: "destructive",
+        });
+      }
+      const email = customerEmail.trim().toLowerCase();
+      if (email) {
+        await supabase.from("confirmed_booking_customers").upsert(
+          {
+            organization_id: organizationId,
+            customer_email: email,
+            customer_name: customerName || null,
+            customer_phone: customerPhone.trim() || null,
+            updated_at: new Date().toISOString(),
+          },
+          { onConflict: "organization_id,customer_email" },
+        );
+      }
+      return data;
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ["customers", organizationId] });
+      toast({ title: "Linked to salon booking", description: "You can edit or reschedule like any other appointment." });
+      onLinked(data);
+    },
+    onError: (err: any) => {
+      toast({ title: "Could not create booking", description: err?.message ?? "Try again", variant: "destructive" });
+    },
+  });
 
   const handleRemove = async () => {
     if (!event || !userId) return;
@@ -1042,7 +1448,7 @@ function RemoveGcalEventDialog({ event, open, onOpenChange, userId, onSuccess }:
       });
       if (error) throw error;
       toast({ title: "Removed from Google Calendar" });
-      onSuccess();
+      onRemoveSuccess();
     } catch (err: any) {
       toast({ title: "Error", description: err?.message ?? "Could not remove event from Google Calendar", variant: "destructive" });
     } finally {
@@ -1050,32 +1456,159 @@ function RemoveGcalEventDialog({ event, open, onOpenChange, userId, onSuccess }:
     }
   };
 
+  const handleLink = () => {
+    if (!event) return;
+    const customerName = [customerFirstName.trim(), customerLastName.trim()].filter(Boolean).join(" ").trim();
+    if (!customerName) {
+      toast({ title: "Enter customer first and/or last name", variant: "destructive" });
+      return;
+    }
+    if (!customerEmail.trim()) {
+      toast({ title: "Enter customer email", variant: "destructive" });
+      return;
+    }
+    if (!locationId || !serviceId) {
+      toast({ title: "Select location and service", variant: "destructive" });
+      return;
+    }
+    linkMutation.mutate();
+  };
+
+  const busy = removing || linkMutation.isPending;
+
   if (!event) return null;
 
   return (
-    <Dialog open={open} onOpenChange={(open) => !removing && onOpenChange(open)}>
-      <DialogContent className="max-w-md">
+    <Dialog open={open} onOpenChange={(o) => !busy && onOpenChange(o)}>
+      <DialogContent className="max-w-md max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>Event from Google Calendar</DialogTitle>
         </DialogHeader>
         <p className="text-sm text-muted-foreground">
-          This event is only in Google Calendar (for example, from a booking that was deleted while disconnected). You can remove it from Google Calendar here.
+          This event is only in Google Calendar (for example, from a booking that was deleted while disconnected). Link it
+          to a salon booking to manage it like your other appointments, or remove it from Google only.
         </p>
         <div className="rounded-md border bg-muted/30 p-3 text-sm">
-          <p className="font-medium truncate">{event.summary}</p>
+          <p className="font-medium break-words">{event.summary}</p>
           <p className="text-muted-foreground">
             {format(new Date(event.start), "MMM d, yyyy · h:mm a")}
             {event.end ? ` – ${format(new Date(event.end), "h:mm a")}` : ""}
           </p>
         </div>
-        <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={removing}>
-            Cancel
+
+        <div className="space-y-3 border-t pt-4">
+          <p className="text-sm font-medium">Link to salon booking</p>
+          <div className="grid gap-2">
+            <Label>Location</Label>
+            <Select
+              value={locationId}
+              onValueChange={(v) => {
+                setLocationId(v);
+                setStaffId(ORPHAN_STAFF_ANY);
+              }}
+            >
+              <SelectTrigger>
+                <SelectValue placeholder="Select location" />
+              </SelectTrigger>
+              <SelectContent>
+                {locations.map((l) => (
+                  <SelectItem key={l.id} value={l.id}>
+                    {l.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="grid gap-2">
+            <Label>Service</Label>
+            <Select value={serviceId} onValueChange={setServiceId}>
+              <SelectTrigger>
+                <SelectValue placeholder="Select service" />
+              </SelectTrigger>
+              <SelectContent>
+                {services.map((s) => (
+                  <SelectItem key={s.id} value={s.id}>
+                    {s.name} ({s.duration_minutes} min)
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          {locationId && (
+            <div className="grid gap-2">
+              <Label>Staff (optional)</Label>
+              <Select value={staffId || ORPHAN_STAFF_ANY} onValueChange={setStaffId}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Any" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={ORPHAN_STAFF_ANY}>Any</SelectItem>
+                  {staffForLocation.map((s) => (
+                    <SelectItem key={s.id} value={s.id}>
+                      {s.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
+          <div className="grid grid-cols-2 gap-2">
+            <div className="grid gap-2">
+              <Label>First name</Label>
+              <Input value={customerFirstName} onChange={(e) => setCustomerFirstName(e.target.value)} placeholder="First name" />
+            </div>
+            <div className="grid gap-2">
+              <Label>Last name</Label>
+              <Input value={customerLastName} onChange={(e) => setCustomerLastName(e.target.value)} placeholder="Last name" />
+            </div>
+          </div>
+          <div className="grid gap-2">
+            <Label>Email</Label>
+            <Input
+              type="email"
+              value={customerEmail}
+              onChange={(e) => setCustomerEmail(e.target.value)}
+              placeholder="email@example.com"
+            />
+          </div>
+          <div className="grid gap-2">
+            <Label>Phone (optional)</Label>
+            <PhoneInput value={customerPhone} onChange={setCustomerPhone} placeholder="Contact number" />
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <div className="grid gap-2">
+              <Label>Date</Label>
+              <Input
+                type="date"
+                value={format(startDate, "yyyy-MM-dd")}
+                onChange={(e) => setStartDate(e.target.value ? new Date(e.target.value) : startDate)}
+              />
+            </div>
+            <div className="grid gap-2">
+              <Label>Start time</Label>
+              <Input type="time" value={startTime} onChange={(e) => setStartTime(e.target.value)} />
+            </div>
+          </div>
+          <div className="grid gap-2">
+            <Label>Notes (optional)</Label>
+            <Input value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Internal notes" />
+          </div>
+        </div>
+
+        <DialogFooter className="flex-col gap-2 sm:flex-col sm:space-x-0">
+          <Button onClick={handleLink} disabled={busy} className="w-full gap-2">
+            {linkMutation.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
+            Save as salon booking
           </Button>
-          <Button variant="destructive" onClick={handleRemove} disabled={removing} className="gap-2">
-            {removing && <Loader2 className="h-4 w-4 animate-spin" />}
-            {removing ? "Removing…" : "Remove from Google Calendar"}
-          </Button>
+          <div className="flex w-full flex-wrap gap-2 justify-between">
+            <Button variant="outline" onClick={() => onOpenChange(false)} disabled={busy}>
+              Cancel
+            </Button>
+            <Button variant="destructive" onClick={handleRemove} disabled={busy} className="gap-2">
+              {removing && <Loader2 className="h-4 w-4 animate-spin" />}
+              {removing ? "Removing…" : "Remove from Google only"}
+            </Button>
+          </div>
         </DialogFooter>
       </DialogContent>
     </Dialog>

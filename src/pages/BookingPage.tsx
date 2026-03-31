@@ -52,9 +52,28 @@ import { Day } from "react-day-picker";
 import { DEFAULT_EMBED_THEME, hexToHsl, hexToHslWithAlpha, hexToRgba, getContrastingTextColors } from "@/types/embedTheme";
 import type { EmbedTheme } from "@/types/embedTheme";
 import { getHolidayDatesForYears, getHolidaysWithNames } from "@/lib/holidays";
+import { isSlotAvailableForBooking, type SlotStartRow } from "@/lib/slotStartCapacity";
 
 /** Minutes of buffer required between consecutive bookings; next slot can only start after this after the previous end. */
 const BOOKING_SLOT_BUFFER_MINUTES = 15;
+
+function eligibleStaffIdsForWallSlot(
+  activeStaffAtLocation: Set<string>,
+  staffOnlyBreaks: { start_time: string; end_time: string; organization_break_slot_staff?: { staff_id: string }[] }[],
+  dateStr: string,
+  slotWallStart: Date,
+  slotWallEnd: Date,
+): string[] {
+  return [...activeStaffAtLocation].filter((sid) =>
+    !staffOnlyBreaks.some((brk) => {
+      const ids = (brk.organization_break_slot_staff ?? []).map((x) => x.staff_id);
+      if (!ids.includes(sid)) return false;
+      const bs = new Date(`${dateStr}T${brk.start_time.slice(0, 5)}:00`);
+      const be = new Date(`${dateStr}T${brk.end_time.slice(0, 5)}:00`);
+      return slotWallStart.getTime() < be.getTime() && slotWallEnd.getTime() > bs.getTime();
+    }),
+  );
+}
 
 /** Subtract closure time windows from availability windows; returns list of open intervals (each { start_time, end_time } as HH:mm). */
 function subtractClosureWindows(
@@ -415,9 +434,8 @@ export default function BookingPage() {
       const dayStart = new Date(selectedDate + "T00:00:00").toISOString();
       const dayEnd = new Date(selectedDate + "T23:59:59").toISOString();
 
-      // All bookings at this location block the same wall-clock slot for every customer
-      const { data: busyIntervals, error: busyErr } = await supabase.rpc(
-        "get_location_busy_intervals",
+      const { data: slotRows, error: slotErr } = await supabase.rpc(
+        "get_location_slot_start_bookings",
         {
           p_location_id: selectedLocation,
           p_range_start: dayStart,
@@ -425,11 +443,10 @@ export default function BookingPage() {
           p_exclude_pending_token: null,
         },
       );
-      if (busyErr) {
-        console.error("[booking-slots] get_location_busy_intervals:", busyErr);
+      if (slotErr) {
+        console.error("[booking-slots] get_location_slot_start_bookings:", slotErr);
       }
-      const existing: { start_time: string; end_time: string }[] =
-        busyIntervals ?? [];
+      const slotStartRows: SlotStartRow[] = (slotRows ?? []) as SlotStartRow[];
 
       let gcalEvents: { start: string; end: string }[] = [];
       if (selectedStaff) {
@@ -477,20 +494,36 @@ export default function BookingPage() {
         ) {
           const slotEnd = addMinutes(current, duration);
           const isPast = !isAfter(current, new Date());
-          const bookingConflict = existing?.some((b) => {
-            const bs = new Date(b.start_time);
-            const be = new Date(b.end_time);
-            const beWithBuffer = addMinutes(be, BOOKING_SLOT_BUFFER_MINUTES);
-            return isBefore(current, beWithBuffer) && isAfter(slotEnd, bs);
-          });
+          const slotWallStart = current;
+          const slotWallEnd = slotEnd;
+          const eligibleForSlot = eligibleStaffIdsForWallSlot(
+            activeStaffAtLocation,
+            staffOnlyBreaks,
+            dateStr,
+            slotWallStart,
+            slotWallEnd,
+          );
+          const hasEligibleStaffForSlot = selectedStaff
+            ? eligibleForSlot.includes(selectedStaff)
+            : activeStaffAtLocation.size === 0
+              ? true
+              : eligibleForSlot.length > 0;
+
+          const bookingConflict =
+            !hasEligibleStaffForSlot ||
+            !isSlotAvailableForBooking({
+              rows: slotStartRows,
+              slotStartMs: current.getTime(),
+              eligibleStaffCount: eligibleForSlot.length,
+              locationHasNoStaff: activeStaffAtLocation.size === 0,
+              requestedStaffId: selectedStaff || null,
+            });
           const gcalConflict = gcalEvents.some((e) => {
             const es = new Date(e.start);
             const ee = new Date(e.end);
             const eeWithBuffer = addMinutes(ee, BOOKING_SLOT_BUFFER_MINUTES);
             return isBefore(current, eeWithBuffer) && isAfter(slotEnd, es);
           });
-          const slotWallStart = current;
-          const slotWallEnd = slotEnd;
           const wallOverlapBreak = (bStart: string, bEnd: string) => {
             const bs = new Date(`${dateStr}T${bStart.slice(0, 5)}:00`);
             const be = new Date(`${dateStr}T${bEnd.slice(0, 5)}:00`);

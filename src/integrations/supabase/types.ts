@@ -126,6 +126,7 @@ export type Database = {
       }
       bookings: {
         Row: {
+          appointment_id: string | null
           created_at: string
           customer_email: string
           customer_name: string
@@ -147,6 +148,7 @@ export type Database = {
           updated_at: string
         }
         Insert: {
+          appointment_id?: string | null
           created_at?: string
           customer_email: string
           customer_name: string
@@ -168,6 +170,7 @@ export type Database = {
           updated_at?: string
         }
         Update: {
+          appointment_id?: string | null
           created_at?: string
           customer_email?: string
           customer_name?: string
@@ -1068,6 +1071,15 @@ export type Database = {
           p_exclude_pending_token?: string | null
         }
         Returns: { start_time: string; end_time: string }[]
+      }
+      get_location_slot_start_bookings: {
+        Args: {
+          p_location_id: string
+          p_range_end: string
+          p_range_start: string
+          p_exclude_pending_token?: string | null
+        }
+        Returns: { start_time: string; staff_id: string | null }[]
       }
     }
     Enums: {

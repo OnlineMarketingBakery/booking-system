@@ -2,6 +2,7 @@ import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import Stripe from "https://esm.sh/stripe@18.5.0";
 import { createClient } from "npm:@supabase/supabase-js@2.57.2";
 import Holidays from "npm:date-holidays@3.26.9";
+import { isSlotAvailableForBooking } from "../_shared/slotStartCapacity.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -84,6 +85,8 @@ function validateInput(body: Record<string, unknown>) {
 
 const SLOT_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const SLOT_TIME_RE = /^([01]?\d|2[0-3]):[0-5]\d$/;
+
+const BOOKING_BUFFER_MIN = 15;
 
 /** Date + time exactly as shown on the booking UI (for customer-facing emails). */
 function parseCustomerSlot(body: Record<string, unknown>): { date: string; time: string } | null {
@@ -311,38 +314,64 @@ serve(async (req) => {
       if (staffError || !staffMember) throw new Error("Staff member not found or inactive");
     }
 
-    const BUFFER_MIN = 15;
     const excludePendingToken =
       typeof (body as Record<string, unknown>).pending_confirmation_token === "string"
         ? ((body as Record<string, unknown>).pending_confirmation_token as string).trim() || null
         : null;
-    const { data: busyRows, error: busyErr } = await supabaseClient.rpc(
-      "get_location_busy_intervals",
-      {
-        p_location_id: location_id,
-        p_range_start: startDate.toISOString(),
-        p_range_end: bookingEnd.toISOString(),
-        p_exclude_pending_token: excludePendingToken,
-      },
-    );
-    if (busyErr) {
-      console.error("[create-booking-checkout] get_location_busy_intervals:", busyErr);
-    } else {
-      const bufferMs = BUFFER_MIN * 60 * 1000;
-      const ns = startDate.getTime();
-      const ne = bookingEnd.getTime();
-      for (const row of busyRows ?? []) {
-        const bs = new Date((row as { start_time: string }).start_time).getTime();
-        const be = new Date((row as { end_time: string }).end_time).getTime() + bufferMs;
-        if (ns < be && ne > bs) {
-          return new Response(
-            JSON.stringify({
-              error: "This time slot is no longer available. Please choose another time.",
-            }),
-            { headers: { ...corsHeaders, "Content-Type": "application/json" }, status: 409 },
-          );
-        }
-      }
+
+    const { data: slinksCap } = await supabaseClient
+      .from("staff_locations")
+      .select("staff_id")
+      .eq("location_id", location_id);
+    const capSids = [...new Set((slinksCap ?? []).map((r: { staff_id: string }) => r.staff_id))];
+    let eligibleStaffIdsForCapacity: string[] = [];
+    if (capSids.length > 0) {
+      const { data: activeCap } = await supabaseClient
+        .from("staff")
+        .select("id")
+        .in("id", capSids)
+        .eq("is_active", true);
+      const activeCapSet = new Set((activeCap ?? []).map((r: { id: string }) => r.id));
+      const wallOverlapCap = (bStart: string, bEnd: string) => {
+        const cStartStr = `${dateStr}T${String(bStart).slice(0, 5)}:00`;
+        const cEndStr = `${dateStr}T${String(bEnd).slice(0, 5)}:00`;
+        const cStart = new Date(cStartStr).getTime();
+        const cEnd = new Date(cEndStr).getTime();
+        return startDate.getTime() < cEnd && bookingEnd.getTime() > cStart;
+      };
+      eligibleStaffIdsForCapacity = [...activeCapSet].filter((sid) =>
+        !staffOverlappingBreaks.some((brk) => {
+          const ids = (brk.organization_break_slot_staff ?? []).map((x: { staff_id: string }) => x.staff_id);
+          if (!ids.includes(sid)) return false;
+          return wallOverlapCap(brk.start_time, brk.end_time);
+        })
+      );
+    }
+
+    const padMs = 36 * 60 * 60 * 1000;
+    const { data: slotRows, error: slotErr } = await supabaseClient.rpc("get_location_slot_start_bookings", {
+      p_location_id: location_id,
+      p_range_start: new Date(startDate.getTime() - padMs).toISOString(),
+      p_range_end: new Date(startDate.getTime() + padMs).toISOString(),
+      p_exclude_pending_token: excludePendingToken,
+    });
+    if (slotErr) {
+      console.error("[create-booking-checkout] get_location_slot_start_bookings:", slotErr);
+    } else if (
+      !isSlotAvailableForBooking({
+        rows: (slotRows ?? []) as { start_time: string; staff_id: string | null }[],
+        slotStartMs: startDate.getTime(),
+        eligibleStaffCount: eligibleStaffIdsForCapacity.length,
+        locationHasNoStaff: capSids.length === 0,
+        requestedStaffId: staff_id,
+      })
+    ) {
+      return new Response(
+        JSON.stringify({
+          error: "This time slot is no longer available. Please choose another time.",
+        }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" }, status: 409 },
+      );
     }
 
     const customerSlot = parseCustomerSlot(body as Record<string, unknown>);

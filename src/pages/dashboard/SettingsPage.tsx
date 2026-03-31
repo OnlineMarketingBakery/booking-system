@@ -122,10 +122,10 @@ export default function SettingsPage() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["vat-rates"] });
       setVatRatesSaved(true);
-      toast({ title: "VAT rates saved", description: "Your VAT rates have been updated." });
+      toast({ title: "BTW rates saved", description: "Your BTW rates have been updated." });
     },
     onError: (err: unknown) =>
-      toast({ title: "Error", description: err instanceof Error ? err.message : "Could not save VAT rates", variant: "destructive" }),
+      toast({ title: "Error", description: err instanceof Error ? err.message : "Could not save BTW rates", variant: "destructive" }),
   });
 
   const updateVatRate = (index: number, patch: Partial<VatRateRow>) => {
@@ -155,7 +155,7 @@ export default function SettingsPage() {
   const handleSaveVatRates = () => {
     const valid = vatRates.every((r) => r.name.trim().length > 0);
     if (!valid) {
-      toast({ title: "Name required", description: "Every VAT rate must have a name.", variant: "destructive" });
+      toast({ title: "Name required", description: "Every BTW rate must have a name.", variant: "destructive" });
       return;
     }
     const withPercentage = vatRates.filter((r) => !r.percentage_disabled);
@@ -352,9 +352,9 @@ export default function SettingsPage() {
                   </>
                 )}
               </div>
-              <p><span className="font-medium">Slug:</span> {organization?.slug}</p>
-              <p><span className="font-medium">Stripe:</span> {organization?.stripe_account_id || "Not connected"}</p>
-              <div className="space-y-2 pt-2">
+              {/* <p><span className="font-medium">Slug:</span> {organization?.slug}</p> */}
+              {/* <p><span className="font-medium">Stripe:</span> {organization?.stripe_account_id || "Not connected"}</p> */}
+              {/* <div className="space-y-2 pt-2">
                 <Label className="font-medium">Default holiday region</Label>
                 <p className="text-xs text-muted-foreground">Used for public holidays when the customer has not chosen a region. Manage holidays on the Holidays page.</p>
                 <Select
@@ -383,7 +383,7 @@ export default function SettingsPage() {
                     ))}
                   </SelectContent>
                 </Select>
-              </div>
+              </div> */}
             </CardContent>
           </Card>
 
@@ -435,9 +435,9 @@ export default function SettingsPage() {
               <div>
                 <CardTitle className="flex items-center gap-2">
                   <Percent className="h-5 w-5 text-primary" />
-                  VAT rates
+                  BTW rates
                 </CardTitle>
-                <CardDescription>Define VAT rates for your services. When adding a service, you can choose which rate applies.</CardDescription>
+                <CardDescription>Define BTW rates for your services. When adding a service, you can choose which rate applies.</CardDescription>
               </div>
               <Button onClick={handleSaveVatRates} disabled={vatRatesSaved || saveVatRates.isPending}>
                 {saveVatRates.isPending && <Loader2 className="h-4 w-4 animate-spin mr-2" />}
@@ -467,7 +467,7 @@ export default function SettingsPage() {
                         <div className="flex gap-2 items-start justify-between">
                           <div className="grid gap-3 flex-1 max-w-md">
                             <div className="space-y-2">
-                              <Label>VAT name *</Label>
+                              <Label>BTW name *</Label>
                               <Input
                                 value={rate.name}
                                 onChange={(e) => updateVatRate(index, { name: e.target.value })}
@@ -513,7 +513,7 @@ export default function SettingsPage() {
                     ))}
                   </RadioGroup>
                   <button type="button" className="text-primary hover:underline text-sm font-medium" onClick={addVatRate}>
-                    + Add new VAT rate
+                    + Add new BTW rate
                   </button>
                 </>
               )}

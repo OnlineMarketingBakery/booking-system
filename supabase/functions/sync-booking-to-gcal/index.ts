@@ -78,14 +78,6 @@ Deno.serve(async (req) => {
       });
     }
 
-    // Already synced to Google Calendar (e.g. from a previous connection or backfill)
-    if ((booking as any).gcal_event_id) {
-      return new Response(JSON.stringify({ success: true, event_id: (booking as any).gcal_event_id, skipped: true, reason: "Already synced" }), {
-        status: 200,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-    }
-
     const ownerId = (booking.organizations as any)?.owner_id;
     if (!ownerId) {
       return new Response(JSON.stringify({ error: "No org owner" }), {
@@ -94,7 +86,60 @@ Deno.serve(async (req) => {
       });
     }
 
-    // Only sync bookings created after user's last GCal disconnect (avoid re-pushing transferred events)
+    const accessToken = await getValidAccessToken(supabase, ownerId, GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET);
+    if (!accessToken) {
+      return new Response(JSON.stringify({ skipped: true, reason: "No Google Calendar connected" }), {
+        status: 200,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    const gcalEventBody = {
+      summary: `${booking.customer_name} — ${(booking.services as any)?.name || "Appointment"}`,
+      description: `Staff: ${(booking.staff as any)?.name || "—"}\nLocation: ${(booking.locations as any)?.name || "—"}\nEmail: ${booking.customer_email}\nPhone: ${booking.customer_phone || "N/A"}\nStatus: ${booking.status}`,
+      start: { dateTime: booking.start_time, timeZone: "UTC" },
+      end: { dateTime: booking.end_time, timeZone: "UTC" },
+      extendedProperties: {
+        private: {
+          booking_id: booking_id,
+          location_id: booking.location_id,
+          organization_id: booking.organization_id,
+          service_id: booking.service_id,
+          customer_name: booking.customer_name,
+          customer_email: booking.customer_email,
+          ...(booking.staff_id && { staff_id: booking.staff_id }),
+        },
+      },
+    };
+
+    const existingGcalId = (booking as any).gcal_event_id as string | null;
+    if (existingGcalId) {
+      const patchRes = await fetch(
+        `https://www.googleapis.com/calendar/v3/calendars/primary/events/${encodeURIComponent(existingGcalId)}?sendUpdates=all`,
+        {
+          method: "PATCH",
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(gcalEventBody),
+        },
+      );
+      const patchData = await patchRes.json();
+      if (!patchRes.ok) {
+        console.error("GCal patch event error:", patchData);
+        return new Response(JSON.stringify({ error: "Failed to update Google Calendar event", details: patchData }), {
+          status: patchRes.status >= 500 ? 502 : 400,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+      return new Response(JSON.stringify({ success: true, event_id: existingGcalId, updated: true }), {
+        status: 200,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    // Only create new GCal events for bookings created after user's last GCal disconnect
     const { data: lastDisconnect } = await supabase
       .from("gcal_disconnect_log")
       .select("disconnected_at")
@@ -111,40 +156,13 @@ Deno.serve(async (req) => {
       });
     }
 
-    const accessToken = await getValidAccessToken(supabase, ownerId, GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET);
-    if (!accessToken) {
-      return new Response(JSON.stringify({ skipped: true, reason: "No Google Calendar connected" }), {
-        status: 200,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-    }
-
-    // Create Google Calendar event (extendedProperties allow filtering by location and round-trip on disconnect)
-    const event = {
-      summary: `${booking.customer_name} — ${(booking.services as any)?.name || "Appointment"}`,
-      description: `Staff: ${(booking.staff as any)?.name}\nLocation: ${(booking.locations as any)?.name}\nEmail: ${booking.customer_email}\nPhone: ${booking.customer_phone || "N/A"}\nStatus: ${booking.status}`,
-      start: { dateTime: booking.start_time, timeZone: "UTC" },
-      end: { dateTime: booking.end_time, timeZone: "UTC" },
-      extendedProperties: {
-        private: {
-          booking_id: booking_id,
-          location_id: booking.location_id,
-          organization_id: booking.organization_id,
-          service_id: booking.service_id,
-          customer_name: booking.customer_name,
-          customer_email: booking.customer_email,
-          ...(booking.staff_id && { staff_id: booking.staff_id }),
-        },
-      },
-    };
-
-    const gcalRes = await fetch("https://www.googleapis.com/calendar/v3/calendars/primary/events", {
+    const gcalRes = await fetch("https://www.googleapis.com/calendar/v3/calendars/primary/events?sendUpdates=all", {
       method: "POST",
       headers: {
         Authorization: `Bearer ${accessToken}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify(event),
+      body: JSON.stringify(gcalEventBody),
     });
 
     const gcalData = await gcalRes.json();
@@ -156,7 +174,6 @@ Deno.serve(async (req) => {
       });
     }
 
-    // Store so we don't create duplicates on reconnect or double-sync (ignore if column missing)
     const { error: updateErr } = await supabase.from("bookings").update({ gcal_event_id: gcalData.id }).eq("id", booking_id);
     if (updateErr) {
       // Column may not exist yet (migration not run)
@@ -168,7 +185,8 @@ Deno.serve(async (req) => {
     });
   } catch (err) {
     console.error("sync-booking-to-gcal error:", err);
-    return new Response(JSON.stringify({ error: err.message }), {
+    const msg = err instanceof Error ? err.message : String(err);
+    return new Response(JSON.stringify({ error: msg }), {
       status: 500,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
