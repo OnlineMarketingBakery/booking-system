@@ -267,6 +267,48 @@ Deno.serve(async (req) => {
       );
     }
 
+    if (action === "validate-session") {
+      const authHeader = req.headers.get("Authorization");
+      if (!authHeader) {
+        return new Response(JSON.stringify({ error: "Unauthorized" }), {
+          status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+      const jwtToken = authHeader.replace("Bearer ", "");
+      const caller = await verifyCustomJWT(jwtToken);
+      if (!caller) {
+        return new Response(JSON.stringify({ error: "Session invalid or expired" }), {
+          status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+      const { data: row, error: rowErr } = await admin
+        .from("app_users")
+        .select("id, email, full_name, approval_status, must_change_password")
+        .eq("id", caller.sub)
+        .maybeSingle();
+      if (rowErr || !row) {
+        return new Response(JSON.stringify({ error: "Unauthorized" }), {
+          status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+      if ((row as { approval_status?: string }).approval_status !== "approved") {
+        return new Response(JSON.stringify({ error: "Account not approved" }), {
+          status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+      return new Response(
+        JSON.stringify({
+          user: {
+            id: row.id,
+            email: row.email,
+            full_name: row.full_name,
+            must_change_password: Boolean((row as { must_change_password?: boolean }).must_change_password),
+          },
+        }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
     if (action === "reset-password") {
       const { newPassword } = body;
       const authHeader = req.headers.get("Authorization");

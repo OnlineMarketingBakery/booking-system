@@ -89,15 +89,67 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
-    const { token: storedToken, user: storedUser } = getStoredAuth();
-    if (storedToken && storedUser && !isTokenExpired(storedToken)) {
-      setToken(storedToken);
-      setUser(storedUser);
-      fetchRoles(storedUser.id, storedToken);
-    } else {
-      clearAuth();
+    let cancelled = false;
+
+    async function restoreSession() {
+      const { token: storedToken, user: storedUser } = getStoredAuth();
+
+      if (!storedToken || !storedUser || isTokenExpired(storedToken)) {
+        clearAuth();
+        setToken(null);
+        setUser(null);
+        setRoles([]);
+        setLoading(false);
+        return;
+      }
+
+      try {
+        const res = await fetch(FUNCTION_URL, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${storedToken}`,
+          },
+          body: JSON.stringify({ action: "validate-session" }),
+        });
+        const data = await res.json().catch(() => ({}));
+
+        if (cancelled) return;
+
+        if (!res.ok) {
+          clearAuth();
+          setToken(null);
+          setUser(null);
+          setRoles([]);
+          setLoading(false);
+          return;
+        }
+
+        const u: CustomUser = {
+          id: data.user.id,
+          email: data.user.email,
+          full_name: data.user.full_name,
+          must_change_password: Boolean(data.user?.must_change_password),
+        };
+        storeAuth(storedToken, u);
+        setToken(storedToken);
+        setUser(u);
+        await fetchRoles(u.id, storedToken);
+      } catch {
+        if (cancelled) return;
+        // Network error: keep offline session from storage; still load roles best-effort
+        setToken(storedToken);
+        setUser(storedUser);
+        void fetchRoles(storedUser.id, storedToken);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
     }
-    setLoading(false);
+
+    void restoreSession();
+    return () => {
+      cancelled = true;
+    };
   }, [fetchRoles]);
 
   const signUp = async (email: string, password: string, fullName: string) => {

@@ -23,6 +23,7 @@
 
 ### Sign in
 
+- [ ] While the app checks an **existing session** (for example after refreshing the login page when you were already signed in), you briefly see a **loading state**, then either stay on login or go to the dashboard as expected—not a broken half-loaded screen.
 - [ ] **Sign in** with a correct email and password opens the dashboard.
 - [ ] **Wrong password** shows an error and does not open the dashboard.
 - [ ] **Forgot password:** You can request a reset, see confirmation that an email may have been sent, and (using the link from email) set a **new password** and then sign in with it.

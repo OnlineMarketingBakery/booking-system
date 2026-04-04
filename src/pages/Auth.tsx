@@ -19,7 +19,7 @@ import { SpamProtectionFields } from "@/components/SpamProtectionFields";
 import { Loader2 } from "lucide-react";
 
 export default function Auth() {
-  const { signIn, signUp, user, requestPasswordReset } = useAuth();
+  const { signIn, signUp, user, requestPasswordReset, loading: authLoading } = useAuth();
   const navigate = useNavigate();
   const { toast } = useToast();
   const [loading, setLoading] = useState(false);
@@ -28,6 +28,14 @@ export default function Auth() {
   const [forgotLoading, setForgotLoading] = useState(false);
   const [forgotSent, setForgotSent] = useState(false);
   const { validateSpamProtection, SpamProtectionFieldsProps } = useSpamProtection();
+
+  if (authLoading) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-muted/30 px-4">
+        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+      </div>
+    );
+  }
 
   // Redirect if already logged in
   if (user) {
