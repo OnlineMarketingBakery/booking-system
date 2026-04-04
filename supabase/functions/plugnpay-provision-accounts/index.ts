@@ -1,13 +1,13 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import {
   provisionSalonOwnerFromPlugnpayContact,
-  contactFromOrder,
+  contactFromSubscriptionRecord,
   contactEmail,
   type BillingContact,
 } from "../_shared/plugnpay-provision-buyer.ts";
 import {
-  orderHasAllowedPlugnpayProduct,
   parseAllowedPlugnpayProductIds,
+  subscriptionHasAllowedPlugnpayProduct,
 } from "../_shared/plugnpay-product-filter.ts";
 
 const corsHeaders = {
@@ -97,14 +97,19 @@ Deno.serve(async (req) => {
     }
 
     let page = 1;
-    const allOrders: { billing?: { contact?: BillingContact } }[] = [];
+    const allSubscriptions: unknown[] = [];
     let lastPage = 1;
 
     do {
-      const url = new URL("https://api.plugandpay.com/v2/orders");
-      url.searchParams.set("limit", "25");
+      const url = new URL("https://api.plugandpay.com/v2/subscriptions");
+      url.searchParams.set("limit", "100");
       url.searchParams.set("page", String(page));
-      url.searchParams.set("include", "items,payment,products,subscriptions,billing,shipping,taxes,discounts,utm");
+      url.searchParams.set(
+        "include",
+        "billing,product,pricing,product_images,tags,trial,utm"
+      );
+      url.searchParams.set("mode", "live");
+      url.searchParams.set("status", "active");
 
       const res = await fetch(url.toString(), {
         headers: { Authorization: `Bearer ${plugKey}`, Accept: "application/json" },
@@ -118,16 +123,16 @@ Deno.serve(async (req) => {
       }
       const result = await res.json();
       const batch = result.data ?? [];
-      allOrders.push(...batch);
+      allSubscriptions.push(...batch);
       lastPage = result.meta?.last_page ?? page;
       page += 1;
     } while (page <= lastPage);
 
     const allowedProducts = parseAllowedPlugnpayProductIds();
     const emailToContact = new Map<string, BillingContact>();
-    for (const order of allOrders) {
-      if (!orderHasAllowedPlugnpayProduct(order, allowedProducts)) continue;
-      const c = contactFromOrder(order);
+    for (const sub of allSubscriptions) {
+      if (!subscriptionHasAllowedPlugnpayProduct(sub, allowedProducts)) continue;
+      const c = contactFromSubscriptionRecord(sub);
       if (!c) continue;
       const em = contactEmail(c);
       if (!em) continue;
@@ -159,7 +164,7 @@ Deno.serve(async (req) => {
     return new Response(
       JSON.stringify({
         ok: true,
-        orders_scanned: allOrders.length,
+        subscriptions_scanned: allSubscriptions.length,
         billing_emails_unique: emailToContact.size,
         created,
         skipped_existing_count: skippedExisting.length,

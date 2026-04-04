@@ -1,6 +1,6 @@
 /**
  * Create Salonora salon_owner from Plug&Pay billing contact (welcome email + password setup link).
- * Used by plugnpay-provision-accounts (bulk) and plugnpay-order-webhook (single order).
+ * Used by plugnpay-provision-accounts (subscription list) and plugnpay-order-webhook (subscription webhooks only).
  */
 import { Resend } from "npm:resend@2.0.0";
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
@@ -55,6 +55,19 @@ export function contactFromBillingDetails(d: unknown): BillingContact | null {
     last_name: o.last_name ?? o.lastname ?? o.family_name,
     name: o.name ?? o.full_name,
   };
+}
+
+/** Subscription list/API rows: `billing.contact` or flat fields on `billing` */
+export function contactFromSubscriptionRecord(sub: unknown): BillingContact | null {
+  if (!sub || typeof sub !== "object") return null;
+  const o = sub as Record<string, unknown>;
+  const fromNested = contactFromOrder(o as { billing?: { contact?: BillingContact } });
+  if (fromNested && contactEmail(fromNested)) return fromNested;
+  if (o.billing && typeof o.billing === "object") {
+    const flat = contactFromBillingDetails(o.billing);
+    if (flat && contactEmail(flat)) return flat;
+  }
+  return null;
 }
 
 export type ProvisionBuyerResult =

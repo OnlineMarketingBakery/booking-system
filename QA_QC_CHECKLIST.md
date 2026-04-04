@@ -183,9 +183,9 @@ Log in with a **platform admin** account (your team provides this).
 - [ ] **Pending sign-ups** (if used): You can **approve** or **reject**; approved users can sign in as owners; rejected users cannot access the dashboard inappropriately.
 - [ ] **User and organization management** actions your team cares about (view, disable, delete) work and show confirmations or errors in plain language.
 - [ ] Charts or statistics on the admin dashboard load without errors.
-- [ ] **Plug&Pay sync (if used):** Running the sync behaves as your team expects and new buyers get the right **welcome** experience (no errors only visible in logs).
-- [ ] **Plug&Pay webhook (if used):** After a test purchase on the connected product, the buyer receives the **create password** email (or your team sees a clear log if something failed).
-- [ ] **Plug&Pay product filter (if your team limits sign-up to one product):** A purchase of a **different** product does **not** create an account or send the create-password email; the **allowed** product still does.
+- [ ] **Plug&Pay sync (if used):** Running the sync (active subscriptions list) behaves as your team expects and new buyers get the right **welcome** experience (no errors only visible in logs).
+- [ ] **Plug&Pay webhook (if used):** After a test purchase or **new subscription** (for your allowed product), the buyer receives the **create password** email if they are **new** to Salonora; existing emails are not duplicated (or your team sees a clear log if something failed).
+- [ ] **Plug&Pay product filter (if your team limits sign-up to one product):** A **subscription** on a **different** product does **not** create an account or send the create-password email; the **allowed** product still does.
 
 ---
 

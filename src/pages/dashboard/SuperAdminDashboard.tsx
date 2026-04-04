@@ -94,7 +94,13 @@ export default function SuperAdminDashboard() {
 
   const provisionPlugnpayBuyers = useMutation({
     mutationFn: async () => {
-      const data = (await invokeFunction("plugnpay-provision-accounts", {})) as { error?: string };
+      const data = (await invokeFunction("plugnpay-provision-accounts", {})) as {
+        error?: string;
+        created?: { email: string; user_id: string }[];
+        skipped_existing_count?: number;
+        errors?: string[];
+        subscriptions_scanned?: number;
+      };
       if (data?.error) throw new Error(data.error);
       return data;
     },
@@ -102,7 +108,7 @@ export default function SuperAdminDashboard() {
       created?: { email: string; user_id: string }[];
       skipped_existing_count?: number;
       errors?: string[];
-      orders_scanned?: number;
+      subscriptions_scanned?: number;
     }) => {
       queryClient.invalidateQueries({ queryKey: ["admin-users"] });
       queryClient.invalidateQueries({ queryKey: ["admin-platform-stats"] });
@@ -111,7 +117,7 @@ export default function SuperAdminDashboard() {
       const skipped = data?.skipped_existing_count ?? 0;
       toast({
         title: "Plug&Pay sync finished",
-        description: `New accounts: ${created}. Already in Salonora: ${skipped}. Orders scanned: ${data?.orders_scanned ?? "—"}.`,
+        description: `New accounts: ${created}. Already in Salonora: ${skipped}. Active subscriptions scanned: ${data?.subscriptions_scanned ?? "—"}.`,
       });
       if (data?.errors?.length) {
         console.warn("[plugnpay-provision-accounts]", data.errors);
@@ -339,7 +345,7 @@ export default function SuperAdminDashboard() {
                 Plug&Pay buyers → Salonora accounts
               </CardTitle>
               <p className="text-sm text-muted-foreground">
-                Fetches orders from Plug&Pay, then creates an approved salon-owner account for each billing email that is not already in Salonora. New users get an email with a link to choose their own password, then they are signed in.
+                Fetches active live subscriptions from Plug&Pay, then creates an approved salon-owner account for each billing email that is not already in Salonora (and matches your allowed product ids, if configured). New users get an email with a link to choose their own password, then they are signed in.
               </p>
             </CardHeader>
             <CardContent>

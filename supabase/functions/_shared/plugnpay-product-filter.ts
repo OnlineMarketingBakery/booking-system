@@ -1,6 +1,6 @@
 /**
  * When PLUGNPAY_PROVISION_PRODUCT_IDS is set (comma-separated Plug&Pay product ids),
- * only those orders/line items trigger Salonora provisioning.
+ * only matching subscriptions (`product_id` / `product.id`) trigger Salonora provisioning.
  * When unset or empty, all products are allowed (backward compatible).
  */
 
@@ -15,21 +15,29 @@ export function parseAllowedPlugnpayProductIds(): Set<string> | null {
   return ids.length ? new Set(ids) : null;
 }
 
-/** True if filter is off, or if any order line item matches an allowed product id */
-export function orderHasAllowedPlugnpayProduct(order: unknown, allowed: Set<string> | null): boolean {
+/** True if filter is off, or subscription `product_id` / `product.id` is in the allowlist */
+export function subscriptionHasAllowedPlugnpayProduct(
+  sub: unknown,
+  allowed: Set<string> | null
+): boolean {
   if (!allowed) return true;
-  if (!order || typeof order !== "object") return false;
-  const items = (order as Record<string, unknown>).items;
-  if (!Array.isArray(items)) return false;
-  for (const item of items) {
-    if (!item || typeof item !== "object") continue;
-    const row = item as Record<string, unknown>;
-    const nested = row.product;
-    const pid =
-      row.product_id ??
-      (nested && typeof nested === "object" ? (nested as Record<string, unknown>).id : undefined);
-    if (pid === undefined || pid === null) continue;
-    if (allowed.has(String(pid))) return true;
-  }
-  return false;
+  if (!sub || typeof sub !== "object") return false;
+  const r = sub as Record<string, unknown>;
+  const nested = r.product;
+  const pid =
+    r.product_id ??
+    (nested && typeof nested === "object" ? (nested as Record<string, unknown>).id : undefined);
+  if (pid === undefined || pid === null) return false;
+  return allowed.has(String(pid));
+}
+
+/** True if `product_id` / `product.id` is missing (hydrate from API before allowlist check). */
+export function subscriptionMissingProductRef(sub: unknown): boolean {
+  if (!sub || typeof sub !== "object") return true;
+  const r = sub as Record<string, unknown>;
+  const nested = r.product;
+  const pid =
+    r.product_id ??
+    (nested && typeof nested === "object" ? (nested as Record<string, unknown>).id : undefined);
+  return pid === undefined || pid === null;
 }

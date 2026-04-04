@@ -1,14 +1,13 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import {
   provisionSalonOwnerFromPlugnpayContact,
-  contactFromOrder,
-  contactFromBillingDetails,
+  contactFromSubscriptionRecord,
   contactEmail,
-  type BillingContact,
 } from "../_shared/plugnpay-provision-buyer.ts";
 import {
-  orderHasAllowedPlugnpayProduct,
   parseAllowedPlugnpayProductIds,
+  subscriptionHasAllowedPlugnpayProduct,
+  subscriptionMissingProductRef,
 } from "../_shared/plugnpay-product-filter.ts";
 
 const corsHeaders = {
@@ -23,70 +22,61 @@ function timingSafeEqual(a: string, b: string): boolean {
   return out === 0;
 }
 
-/** Normalize Plug&Pay webhook JSON to a single order-like object */
-function unwrapOrderFromWebhookPayload(body: unknown): Record<string, unknown> | null {
+const asRec = (x: unknown): Record<string, unknown> | null =>
+  x && typeof x === "object" ? (x as Record<string, unknown>) : null;
+
+/**
+ * Extract subscription object from Plug&Pay webhook JSON.
+ * Only v2/subscriptions is used for hydration — never orders.
+ */
+function unwrapSubscriptionFromWebhookPayload(body: unknown): Record<string, unknown> | null {
   if (!body || typeof body !== "object") return null;
   const b = body as Record<string, unknown>;
-  const data = b.data;
-  if (data && typeof data === "object") {
-    const d = data as Record<string, unknown>;
-    if (d.order && typeof d.order === "object") return d.order as Record<string, unknown>;
-    if (d.billing_details !== undefined || d.billing !== undefined || d.id !== undefined || d.uid !== undefined) {
-      return d as Record<string, unknown>;
+
+  const top = asRec(b.subscription);
+  if (top) return top;
+
+  const data = asRec(b.data);
+  if (data) {
+    const nested = asRec(data.subscription);
+    if (nested) return nested;
+    const rt = String(b.resource_type ?? data.resource_type ?? "").toLowerCase();
+    if (rt === "subscription") return data;
+    const looksLikeOrder =
+      (data.order && typeof data.order === "object") ||
+      (Array.isArray(data.items) && data.items.length > 0);
+    if (!looksLikeOrder && asRec(data.billing) && (data.product_id != null || asRec(data.product))) {
+      return data;
     }
   }
-  if (b.order && typeof b.order === "object") return b.order as Record<string, unknown>;
-  return b;
-}
 
-function resolveContactFromOrderShape(order: Record<string, unknown>): BillingContact | null {
-  const fromNested = contactFromOrder(order as { billing?: { contact?: BillingContact } });
-  if (fromNested && contactEmail(fromNested)) return fromNested;
-
-  const bd = contactFromBillingDetails(order.billing_details);
-  if (bd && contactEmail(bd)) return bd;
-
-  const bill = order.billing;
-  if (bill && typeof bill === "object") {
-    const b = bill as Record<string, unknown>;
-    const inner = b.contact;
-    if (inner && typeof inner === "object") {
-      const c = inner as BillingContact;
-      if (contactEmail(c)) return c;
-    }
-    const flat = contactFromBillingDetails(bill);
-    if (flat && contactEmail(flat)) return flat;
-  }
-
-  const customer = order.customer;
-  if (customer && typeof customer === "object") {
-    const c = customer as Record<string, unknown>;
-    const flat = contactFromBillingDetails({
-      email: c.email ?? c.email_address,
-      first_name: c.first_name ?? c.firstname,
-      last_name: c.last_name ?? c.lastname,
-      name: c.name ?? c.full_name,
-    });
-    if (flat && contactEmail(flat)) return flat;
+  const root = asRec(b);
+  if (root && !data && asRec(root.billing) && (root.product_id != null || asRec(root.product))) {
+    const looksLikeOrder =
+      (Array.isArray(root.items) && root.items.length > 0) || (root.order && typeof root.order === "object");
+    if (!looksLikeOrder) return root;
   }
 
   return null;
 }
 
-async function fetchOrderFromPlugnpayApi(
-  orderId: string,
+async function fetchSubscriptionFromPlugnpayApi(
+  subscriptionId: string,
   apiKey: string
 ): Promise<Record<string, unknown> | null> {
-  const url = new URL(`https://api.plugandpay.com/v2/orders/${encodeURIComponent(orderId)}`);
-  url.searchParams.set("include", "items,payment,products,subscriptions,billing,shipping,taxes,discounts,utm");
+  const url = new URL(`https://api.plugandpay.com/v2/subscriptions/${encodeURIComponent(subscriptionId)}`);
+  url.searchParams.set(
+    "include",
+    "billing,product,pricing,product_images,tags,trial,utm"
+  );
   const res = await fetch(url.toString(), {
     headers: { Authorization: `Bearer ${apiKey}`, Accept: "application/json" },
   });
   if (!res.ok) return null;
   const json = await res.json();
-  const order = json.data ?? json;
-  if (!order || typeof order !== "object") return null;
-  return order as Record<string, unknown>;
+  const sub = json.data ?? json;
+  if (!sub || typeof sub !== "object") return null;
+  return sub as Record<string, unknown>;
 }
 
 Deno.serve(async (req) => {
@@ -130,20 +120,34 @@ Deno.serve(async (req) => {
 
   const allowedProducts = parseAllowedPlugnpayProductIds();
   const plugKey = Deno.env.get("PLUGNPAY_API_KEY");
+  const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
+  const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+  const admin = createClient(supabaseUrl, serviceRoleKey);
 
-  let order: Record<string, unknown> | null = unwrapOrderFromWebhookPayload(body);
-  const orderIdEarly =
-    order && (order.id ?? order.uid ?? order.order_id);
+  let subRecord = unwrapSubscriptionFromWebhookPayload(body);
+  if (!subRecord) {
+    return new Response(
+      JSON.stringify({
+        ok: false,
+        reason: "not_subscription_payload",
+        detail:
+          "Could not parse a subscription from the body. Use subscription webhooks / payloads with billing + product (or data.subscription / resource_type subscription). The orders API is not used.",
+      }),
+      { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+    );
+  }
 
-  if (order && plugKey && orderIdEarly != null && String(orderIdEarly).length > 0) {
-    const hasItems = Array.isArray(order.items) && order.items.length > 0;
-    if (!hasItems && allowedProducts) {
-      const hydrated = await fetchOrderFromPlugnpayApi(String(orderIdEarly), plugKey);
-      if (hydrated) order = hydrated;
+  let sub: Record<string, unknown> = subRecord;
+  const subIdEarly = sub.id ?? sub.uid ?? sub.subscription_id;
+
+  if (plugKey && subIdEarly != null && String(subIdEarly).length > 0) {
+    if (allowedProducts && subscriptionMissingProductRef(sub)) {
+      const hydrated = await fetchSubscriptionFromPlugnpayApi(String(subIdEarly), plugKey);
+      if (hydrated) sub = hydrated;
     }
   }
 
-  if (allowedProducts && order && !orderHasAllowedPlugnpayProduct(order, allowedProducts)) {
+  if (allowedProducts && !subscriptionHasAllowedPlugnpayProduct(sub, allowedProducts)) {
     return new Response(
       JSON.stringify({
         ok: true,
@@ -154,32 +158,23 @@ Deno.serve(async (req) => {
     );
   }
 
-  let contact: BillingContact | null = null;
-  if (order) {
-    contact = resolveContactFromOrderShape(order);
-  }
-
+  let contact = contactFromSubscriptionRecord(sub);
   if (!contact || !contactEmail(contact)) {
-    const id = order && (order.id ?? order.uid ?? order.order_id);
-    if (plugKey && id != null && String(id).length > 0) {
-      const hydrated = await fetchOrderFromPlugnpayApi(String(id), plugKey);
+    if (plugKey && subIdEarly != null && String(subIdEarly).length > 0) {
+      const hydrated = await fetchSubscriptionFromPlugnpayApi(String(subIdEarly), plugKey);
       if (hydrated) {
-        order = hydrated;
-        contact = resolveContactFromOrderShape(hydrated);
+        sub = hydrated;
+        contact = contactFromSubscriptionRecord(hydrated);
       }
     }
   }
-
-  const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
-  const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-  const admin = createClient(supabaseUrl, serviceRoleKey);
 
   if (!contact || !contactEmail(contact)) {
     return new Response(
       JSON.stringify({
         ok: false,
         reason:
-          "No customer email found on webhook. Ensure payload includes billing or set PLUGNPAY_API_KEY so the order can be loaded from the Plug&Pay API.",
+          "No customer email on subscription payload. Include billing or set PLUGNPAY_API_KEY to load v2/subscriptions/{id}.",
       }),
       { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
