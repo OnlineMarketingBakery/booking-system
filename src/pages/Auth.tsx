@@ -31,7 +31,7 @@ export default function Auth() {
 
   // Redirect if already logged in
   if (user) {
-    navigate("/dashboard", { replace: true });
+    navigate(user.must_change_password ? "/dashboard/settings" : "/dashboard", { replace: true });
     return null;
   }
 
@@ -44,8 +44,8 @@ export default function Auth() {
     }
     setLoading(true);
     try {
-      await signIn(form.get("email") as string, form.get("password") as string);
-      navigate("/dashboard");
+      const { must_change_password } = await signIn(form.get("email") as string, form.get("password") as string);
+      navigate(must_change_password ? "/dashboard/settings" : "/dashboard");
     } catch (err: any) {
       toast({ title: "Sign in failed", description: err.message, variant: "destructive" });
     } finally {
@@ -75,7 +75,9 @@ export default function Auth() {
         return;
       }
       toast({ title: "Account created!", description: "You're now signed in." });
-      navigate("/dashboard");
+      navigate(
+        result && "must_change_password" in result && result.must_change_password ? "/dashboard/settings" : "/dashboard"
+      );
     } catch (err: any) {
       toast({ title: "Sign up failed", description: err.message, variant: "destructive" });
     } finally {

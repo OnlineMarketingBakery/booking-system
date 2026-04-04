@@ -3,6 +3,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -31,7 +32,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 
 export default function SettingsPage() {
   const { organization } = useOrganization();
-  const { changePassword } = useAuth();
+  const { changePassword, user } = useAuth();
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [editingName, setEditingName] = useState(false);
@@ -220,7 +221,10 @@ export default function SettingsPage() {
       await changePassword(newPassword);
       setNewPassword("");
       setConfirmPassword("");
-      toast({ title: "Password updated", description: "Use your new password next time you sign in." });
+      toast({
+        title: "Password updated",
+        description: "Use your new password next time you sign in.",
+      });
     } catch (err: unknown) {
       toast({ title: "Password change failed", description: err instanceof Error ? err.message : "Something went wrong", variant: "destructive" });
     } finally {
@@ -236,6 +240,15 @@ export default function SettingsPage() {
           {organization ? "Manage your salon settings" : "Manage your account"}
         </p>
       </div>
+
+      {user?.must_change_password && (
+        <Alert className="border-amber-500/50 bg-amber-50 text-amber-950 dark:bg-amber-950/20 dark:text-amber-100">
+          <AlertTitle>Choose a new password</AlertTitle>
+          <AlertDescription>
+            Your account was set up with a one-time password. Please set a new password below before you continue using the dashboard.
+          </AlertDescription>
+        </Alert>
+      )}
 
       <Card>
         <CardHeader>

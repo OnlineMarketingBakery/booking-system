@@ -11,7 +11,7 @@ import { ChartContainer, ChartTooltip, ChartTooltipContent } from "@/components/
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { PieChart, Pie, Cell } from "recharts";
 import { useToast } from "@/hooks/use-toast";
-import { Loader2, Users, Building2, CalendarDays, Shield, Trash2, UserPlus, Check, X } from "lucide-react";
+import { Loader2, Users, Building2, CalendarDays, Shield, Trash2, UserPlus, Check, X, ShoppingBag } from "lucide-react";
 import { format } from "date-fns";
 import {
   AlertDialog,
@@ -89,6 +89,45 @@ export default function SuperAdminDashboard() {
     onError: (err: any) => {
       toast({ title: "Failed to approve", description: err?.message, variant: "destructive" });
       setApprovingId(null);
+    },
+  });
+
+  const provisionPlugnpayBuyers = useMutation({
+    mutationFn: async () => {
+      const data = (await invokeFunction("plugnpay-provision-accounts", {})) as { error?: string };
+      if (data?.error) throw new Error(data.error);
+      return data;
+    },
+    onSuccess: (data: {
+      created?: { email: string; user_id: string }[];
+      skipped_existing_count?: number;
+      errors?: string[];
+      orders_scanned?: number;
+    }) => {
+      queryClient.invalidateQueries({ queryKey: ["admin-users"] });
+      queryClient.invalidateQueries({ queryKey: ["admin-platform-stats"] });
+      queryClient.invalidateQueries({ queryKey: ["admin-salon-owners"] });
+      const created = data?.created?.length ?? 0;
+      const skipped = data?.skipped_existing_count ?? 0;
+      toast({
+        title: "Plug&Pay sync finished",
+        description: `New accounts: ${created}. Already in Salonora: ${skipped}. Orders scanned: ${data?.orders_scanned ?? "—"}.`,
+      });
+      if (data?.errors?.length) {
+        console.warn("[plugnpay-provision-accounts]", data.errors);
+        toast({
+          title: "Some steps reported issues",
+          description: "Open the browser console for details (for example email delivery).",
+          variant: "destructive",
+        });
+      }
+    },
+    onError: (err: unknown) => {
+      toast({
+        title: "Plug&Pay sync failed",
+        description: err instanceof Error ? err.message : "Request failed",
+        variant: "destructive",
+      });
     },
   });
 
@@ -293,6 +332,32 @@ export default function SuperAdminDashboard() {
         </TabsList>
 
         <TabsContent value="overview" className="space-y-6 mt-4">
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2 text-base">
+                <ShoppingBag className="h-4 w-4" />
+                Plug&Pay buyers → Salonora accounts
+              </CardTitle>
+              <p className="text-sm text-muted-foreground">
+                Fetches orders from Plug&Pay, then creates an approved salon-owner account for each billing email that is not already in Salonora. New users get an email with a one-time password and must set a new password in Settings after first sign-in.
+              </p>
+            </CardHeader>
+            <CardContent>
+              <Button
+                type="button"
+                onClick={() => provisionPlugnpayBuyers.mutate()}
+                disabled={provisionPlugnpayBuyers.isPending}
+              >
+                {provisionPlugnpayBuyers.isPending ? (
+                  <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                ) : (
+                  <ShoppingBag className="h-4 w-4 mr-2" />
+                )}
+                Run sync now
+              </Button>
+            </CardContent>
+          </Card>
+
           {/* Pending signups */}
           {pendingSignups.length > 0 && (
             <Card className="border-primary/30">

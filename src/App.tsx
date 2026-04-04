@@ -33,7 +33,8 @@ import AcceptStaffInvite from "./pages/AcceptStaffInvite";
 
 const queryClient = new QueryClient();
 
-const App = () => (
+const App = () => {
+  return (
   <QueryClientProvider client={queryClient}>
     <TooltipProvider>
       <Toaster />
@@ -80,7 +81,7 @@ const App = () => (
         </AuthProvider>
       </BrowserRouter>
     </TooltipProvider>
-  </QueryClientProvider>
-);
+  </QueryClientProvider>)
+};
 
 export default App;

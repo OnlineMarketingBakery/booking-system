@@ -1,10 +1,19 @@
-import { Outlet } from "react-router-dom";
+import { useEffect } from "react";
+import { Outlet, useLocation, useNavigate } from "react-router-dom";
 import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { DashboardSidebar } from "@/components/DashboardSidebar";
 import { useAuth } from "@/contexts/AuthContext";
 
 export function DashboardLayout() {
   const { user } = useAuth();
+  const location = useLocation();
+  const navigate = useNavigate();
+
+  useEffect(() => {
+    if (user?.must_change_password && location.pathname !== "/dashboard/settings") {
+      navigate("/dashboard/settings", { replace: true });
+    }
+  }, [user?.must_change_password, location.pathname, navigate, user]);
 
   return (
     <SidebarProvider>

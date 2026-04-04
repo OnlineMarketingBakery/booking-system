@@ -64,6 +64,30 @@ async function verifyPassword(password: string, stored: string): Promise<boolean
   return hashB64 === expectedHash;
 }
 
+async function verifyCustomJWT(token: string): Promise<{ sub: string; email: string } | null> {
+  try {
+    const secret = Deno.env.get("JWT_SECRET");
+    if (!secret) return null;
+    const parts = token.split(".");
+    if (parts.length !== 3) return null;
+    const encoder = new TextEncoder();
+    const key = await crypto.subtle.importKey(
+      "raw", encoder.encode(secret),
+      { name: "HMAC", hash: "SHA-256" }, false, ["verify"]
+    );
+    const data = encoder.encode(`${parts[0]}.${parts[1]}`);
+    const sig = Uint8Array.from(atob(parts[2].replace(/-/g, "+").replace(/_/g, "/")), c => c.charCodeAt(0));
+    const valid = await crypto.subtle.verify("HMAC", key, sig, data);
+    if (!valid) return null;
+    const payload = JSON.parse(atob(parts[1].replace(/-/g, "+").replace(/_/g, "/")));
+    if (payload.exp && payload.exp * 1000 < Date.now()) return null;
+    if (!payload.sub || !payload.email) return null;
+    return { sub: payload.sub, email: payload.email };
+  } catch {
+    return null;
+  }
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
@@ -177,7 +201,15 @@ Deno.serve(async (req) => {
 
       const token = await createJWT(newUser.id, newUser.email);
       return new Response(
-        JSON.stringify({ token, user: { id: newUser.id, email: newUser.email, full_name: newUser.full_name } }),
+        JSON.stringify({
+          token,
+          user: {
+            id: newUser.id,
+            email: newUser.email,
+            full_name: newUser.full_name,
+            must_change_password: false,
+          },
+        }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
@@ -192,7 +224,7 @@ Deno.serve(async (req) => {
 
       const { data: user, error: findErr } = await admin
         .from("app_users")
-        .select("id, email, full_name, password_hash, approval_status")
+        .select("id, email, full_name, password_hash, approval_status, must_change_password")
         .eq("email", email.toLowerCase().trim())
         .maybeSingle();
 
@@ -219,17 +251,33 @@ Deno.serve(async (req) => {
       }
 
       const token = await createJWT(user.id, user.email);
+      const mustChange = Boolean((user as { must_change_password?: boolean }).must_change_password);
 
       return new Response(
-        JSON.stringify({ token, user: { id: user.id, email: user.email, full_name: user.full_name } }),
+        JSON.stringify({
+          token,
+          user: {
+            id: user.id,
+            email: user.email,
+            full_name: user.full_name,
+            must_change_password: mustChange,
+          },
+        }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
 
     if (action === "reset-password") {
-      const { email, newPassword } = body;
+      const { newPassword } = body;
       const authHeader = req.headers.get("Authorization");
       if (!authHeader) {
+        return new Response(JSON.stringify({ error: "Unauthorized" }), {
+          status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+      const jwtToken = authHeader.replace("Bearer ", "");
+      const caller = await verifyCustomJWT(jwtToken);
+      if (!caller) {
         return new Response(JSON.stringify({ error: "Unauthorized" }), {
           status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
@@ -243,8 +291,8 @@ Deno.serve(async (req) => {
       const passwordHash = await hashPassword(newPassword);
       const { error: updateErr } = await admin
         .from("app_users")
-        .update({ password_hash: passwordHash })
-        .eq("email", email.toLowerCase().trim());
+        .update({ password_hash: passwordHash, must_change_password: false })
+        .eq("id", caller.sub);
       if (updateErr) throw updateErr;
 
       return new Response(
@@ -462,7 +510,10 @@ Deno.serve(async (req) => {
           status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
       }
-      await admin.from("app_users").update({ password_hash: pending.password_hash }).eq("id", pending.user_id);
+      await admin
+        .from("app_users")
+        .update({ password_hash: pending.password_hash, must_change_password: false })
+        .eq("id", pending.user_id);
       await admin.from("pending_password_confirms").delete().eq("token", confirm_token);
       return new Response(JSON.stringify({ success: true, message: "Your password has been changed. You can now sign in with your new password." }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },

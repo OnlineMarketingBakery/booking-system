@@ -7,6 +7,8 @@ interface CustomUser {
   id: string;
   email: string;
   full_name: string | null;
+  /** True when the user must set a new password in Settings (e.g. one-time password from admin provisioning). */
+  must_change_password?: boolean;
 }
 
 interface AuthContextType {
@@ -14,8 +16,12 @@ interface AuthContextType {
   roles: AppRole[];
   loading: boolean;
   token: string | null;
-  signUp: (email: string, password: string, fullName: string) => Promise<{ pending?: boolean } | void>;
-  signIn: (email: string, password: string) => Promise<void>;
+  signUp: (
+    email: string,
+    password: string,
+    fullName: string
+  ) => Promise<{ pending?: boolean; must_change_password?: boolean } | void>;
+  signIn: (email: string, password: string) => Promise<{ must_change_password?: boolean }>;
   signOut: () => Promise<void>;
   changePassword: (newPassword: string) => Promise<void>;
   requestPasswordReset: (email: string) => Promise<void>;
@@ -107,10 +113,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       return { pending: true };
     }
 
-    storeAuth(data.token, data.user);
+    const u = { ...data.user, must_change_password: Boolean(data.user?.must_change_password) };
+    storeAuth(data.token, u);
     setToken(data.token);
-    setUser(data.user);
-    await fetchRoles(data.user.id, data.token);
+    setUser(u);
+    await fetchRoles(u.id, data.token);
+    return { must_change_password: u.must_change_password };
   };
 
   const signIn = async (email: string, password: string) => {
@@ -122,10 +130,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || "Sign in failed");
 
-    storeAuth(data.token, data.user);
+    const u = { ...data.user, must_change_password: Boolean(data.user?.must_change_password) };
+    storeAuth(data.token, u);
     setToken(data.token);
-    setUser(data.user);
-    await fetchRoles(data.user.id, data.token);
+    setUser(u);
+    await fetchRoles(u.id, data.token);
+    return { must_change_password: u.must_change_password };
   };
 
   const signOut = async () => {
@@ -136,17 +146,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   const changePassword = async (newPassword: string) => {
-    if (!user?.email || !token) throw new Error("You must be signed in to change your password");
+    if (!token) throw new Error("You must be signed in to change your password");
     const res = await fetch(FUNCTION_URL, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${token}`,
       },
-      body: JSON.stringify({ action: "reset-password", email: user.email, newPassword }),
+      body: JSON.stringify({ action: "reset-password", newPassword }),
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || "Password change failed");
+    const cleared = user ? { ...user, must_change_password: false } : null;
+    if (cleared) {
+      storeAuth(token, cleared);
+      setUser(cleared);
+    }
   };
 
   const requestPasswordReset = async (email: string) => {
