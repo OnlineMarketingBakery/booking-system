@@ -108,7 +108,7 @@ Deno.serve(async (req) => {
         "include",
         "billing,product,pricing,product_images,tags,trial,utm"
       );
-      url.searchParams.set("mode", "live");
+      url.searchParams.set("mode", "all");
       url.searchParams.set("status", "active");
 
       const res = await fetch(url.toString(), {
