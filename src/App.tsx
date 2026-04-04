@@ -30,10 +30,71 @@ import ConfirmBookingPage from "./pages/ConfirmBookingPage";
 import ReleaseHoldPage from "./pages/ReleaseHoldPage";
 import GoogleOAuthRedirect from "./pages/GoogleOAuthRedirect";
 import AcceptStaffInvite from "./pages/AcceptStaffInvite";
+import CompletePurchaseSignup from "./pages/CompletePurchaseSignup";
+import { useEffect } from "react";
 
 const queryClient = new QueryClient();
 
 const App = () => {
+  useEffect(() => {
+    const getOrdersFromPlugnPay = async () => {
+      const key = import.meta.env.VITE_SALONOROA_AUTH_KEY;
+      if (!key) return;
+  
+      let page = 1;
+      let allOrders = [];
+      let hasMore = true;
+  
+      try {
+        while (hasMore) {
+          const url = new URL("https://api.plugandpay.com/v2/orders");
+  
+          url.searchParams.set("limit", "100"); // max records per request
+          url.searchParams.set("page", page.toString());
+  
+          // ✅ Include full order details
+          url.searchParams.set(
+            "include",
+            "items,payment,products,subscriptions,billing,shipping,taxes,discounts,utm"
+          );
+  
+          const response = await fetch(url.toString(), {
+            headers: {
+              Authorization: `Bearer ${key}`,
+              Accept: "application/json",
+            },
+          });
+  
+          if (!response.ok) {
+            console.warn(
+              "Plug&Pay orders error:",
+              response.status,
+              await response.text()
+            );
+            break;
+          }
+  
+          const result = await response.json();
+  
+          // ✅ Merge orders
+          allOrders = [...allOrders, ...result.data];
+  
+          // ✅ Pagination handling
+          if (page >= result.meta.last_page) {
+            hasMore = false;
+          } else {
+            page++;
+          }
+        }
+  
+        console.log("✅ All Orders:", allOrders);
+      } catch (error) {
+        console.error("❌ Fetch error:", error);
+      }
+    };
+  
+    void getOrdersFromPlugnPay();
+  }, []);
   return (
   <QueryClientProvider client={queryClient}>
     <TooltipProvider>
@@ -51,6 +112,7 @@ const App = () => {
             <Route path="/book/cancel" element={<BookingPage />} />
             <Route path="/auth/google-callback" element={<GoogleOAuthRedirect />} />
             <Route path="/reset-password" element={<ResetPassword />} />
+            <Route path="/complete-purchase-signup" element={<CompletePurchaseSignup />} />
             <Route path="/confirm-password-change" element={<ConfirmPasswordChange />} />
             <Route path="/accept-staff-invite" element={<AcceptStaffInvite />} />
             <Route

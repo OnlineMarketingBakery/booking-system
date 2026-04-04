@@ -62,3 +62,6 @@ verify_jwt = false
 
 [functions.plugnpay-provision-accounts]
 verify_jwt = false
+
+[functions.plugnpay-order-webhook]
+verify_jwt = false

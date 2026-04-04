@@ -26,6 +26,8 @@ interface AuthContextType {
   changePassword: (newPassword: string) => Promise<void>;
   requestPasswordReset: (email: string) => Promise<void>;
   setNewPassword: (resetToken: string, newPassword: string) => Promise<void>;
+  /** Plug&Pay (etc.) welcome link: set password and receive session. */
+  completePurchaseSetup: (setupToken: string, newPassword: string) => Promise<void>;
   confirmPasswordChange: (confirmToken: string) => Promise<void>;
   hasRole: (role: AppRole) => boolean;
   refreshRoles: () => Promise<void>;
@@ -238,6 +240,30 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (data?.error) throw new Error(data.error);
   };
 
+  const completePurchaseSetup = async (setupToken: string, newPassword: string) => {
+    const res = await fetch(FUNCTION_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        action: "complete-purchase-setup",
+        setup_token: setupToken,
+        new_password: newPassword,
+      }),
+    });
+    const data = (await res.json().catch(() => ({}))) as {
+      error?: string;
+      token?: string;
+      user?: CustomUser;
+    };
+    if (!res.ok) throw new Error(data.error || "Failed to create password");
+    if (!data.token || !data.user?.id) throw new Error("Invalid response from server");
+    const u = { ...data.user, must_change_password: Boolean(data.user.must_change_password) };
+    storeAuth(data.token, u);
+    setToken(data.token);
+    setUser(u);
+    await fetchRoles(u.id, data.token);
+  };
+
   const confirmPasswordChange = async (confirmToken: string) => {
     const { data, error } = await supabase.functions.invoke("auth-custom", {
       body: { action: "confirm-password-change", confirm_token: confirmToken },
@@ -268,7 +294,25 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   return (
-    <AuthContext.Provider value={{ user, roles, loading, token, signUp, signIn, signOut, changePassword, requestPasswordReset, setNewPassword, confirmPasswordChange, hasRole, refreshRoles, invokeFunction }}>
+    <AuthContext.Provider
+      value={{
+        user,
+        roles,
+        loading,
+        token,
+        signUp,
+        signIn,
+        signOut,
+        changePassword,
+        requestPasswordReset,
+        setNewPassword,
+        completePurchaseSetup,
+        confirmPasswordChange,
+        hasRole,
+        refreshRoles,
+        invokeFunction,
+      }}
+    >
       {children}
     </AuthContext.Provider>
   );

@@ -104,6 +104,10 @@ These functions support OAuth, event sync, and event fetching:
 - `disconnect-gcal` (verify_jwt=false) — disconnect integration (token state tracking + log).
 - `backfill-bookings-to-gcal` (verify_jwt=false) — create events for historic bookings.
 
+### Plug&Pay provisioning (SaaS buyers → Salonora accounts)
+- **`plugnpay-provision-accounts`** (`verify_jwt=false`) — Super-admin JWT or `X-Plugnpay-Cron-Secret`; lists all Plug&Pay orders via API and provisions missing billing emails (welcome email with “create password” link). Needs `PLUGNPAY_API_KEY` and shared logic in `_shared/plugnpay-provision-buyer.ts`.
+- **`plugnpay-order-webhook`** (`verify_jwt=false`) — `POST` JSON from Plug&Pay **Order created** / Webhook V2. Authenticate with query `?secret=` and/or header `X-Salonora-Webhook-Secret` matching Supabase secret **`PLUGNPAY_WEBHOOK_SECRET`**. Resolves `billing.contact`, `billing_details`, or hydrates the order with `PLUGNPAY_API_KEY` if the payload has an order id but no email. Returns **200** on success/skip so Plug&Pay does not retry forever.
+
 ## SaaS administration functions (super admin)
 Used by the super admin dashboard to manage users and tenant accounts:
 - `get-pending-signups` (verify_jwt=false) — list users awaiting approval.

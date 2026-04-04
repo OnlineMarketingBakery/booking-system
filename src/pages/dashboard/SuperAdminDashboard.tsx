@@ -339,7 +339,7 @@ export default function SuperAdminDashboard() {
                 Plug&Pay buyers → Salonora accounts
               </CardTitle>
               <p className="text-sm text-muted-foreground">
-                Fetches orders from Plug&Pay, then creates an approved salon-owner account for each billing email that is not already in Salonora. New users get an email with a one-time password and must set a new password in Settings after first sign-in.
+                Fetches orders from Plug&Pay, then creates an approved salon-owner account for each billing email that is not already in Salonora. New users get an email with a link to choose their own password, then they are signed in.
               </p>
             </CardHeader>
             <CardContent>

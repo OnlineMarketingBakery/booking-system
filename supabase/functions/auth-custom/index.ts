@@ -562,6 +562,73 @@ Deno.serve(async (req) => {
       });
     }
 
+    if (action === "complete-purchase-setup") {
+      const { setup_token, new_password } = body;
+      if (!setup_token || typeof setup_token !== "string" || !new_password || typeof new_password !== "string") {
+        return new Response(JSON.stringify({ error: "Token and new password are required." }), {
+          status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+      if (new_password.length < 6) {
+        return new Response(JSON.stringify({ error: "Password must be at least 6 characters" }), {
+          status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+      const { data: setupRow, error: setupErr } = await admin
+        .from("purchase_account_setup_tokens")
+        .select("user_id")
+        .eq("token", setup_token.trim())
+        .gt("expires_at", new Date().toISOString())
+        .maybeSingle();
+      if (setupErr) {
+        console.error("[auth-custom] complete-purchase-setup lookup:", setupErr);
+        return new Response(JSON.stringify({ error: "Something went wrong. Please try again." }), {
+          status: 503, headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+      if (!setupRow) {
+        return new Response(JSON.stringify({ error: "This link is invalid or has expired. Contact support if you need help." }), {
+          status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+      const passwordHash = await hashPassword(new_password);
+      const { error: updErr } = await admin
+        .from("app_users")
+        .update({ password_hash: passwordHash, must_change_password: false })
+        .eq("id", setupRow.user_id);
+      if (updErr) {
+        console.error("[auth-custom] complete-purchase-setup update:", updErr);
+        return new Response(JSON.stringify({ error: "Could not save password. Please try again." }), {
+          status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+      await admin.from("purchase_account_setup_tokens").delete().eq("token", setup_token.trim());
+
+      const { data: appUser, error: userErr } = await admin
+        .from("app_users")
+        .select("id, email, full_name")
+        .eq("id", setupRow.user_id)
+        .single();
+      if (userErr || !appUser) {
+        return new Response(JSON.stringify({ error: "Account updated but sign-in failed. Please log in manually." }), {
+          status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+      const jwt = await createJWT(appUser.id, appUser.email);
+      return new Response(
+        JSON.stringify({
+          token: jwt,
+          user: {
+            id: appUser.id,
+            email: appUser.email,
+            full_name: appUser.full_name,
+            must_change_password: false,
+          },
+        }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
     return new Response(
       JSON.stringify({ error: "Invalid action", received: action ?? "(missing)" }),
       { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }

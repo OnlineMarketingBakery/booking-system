@@ -691,6 +691,35 @@ export type Database = {
         }
         Relationships: []
       }
+      purchase_account_setup_tokens: {
+        Row: {
+          expires_at: string
+          id: string
+          token: string
+          user_id: string
+        }
+        Insert: {
+          expires_at?: string
+          id?: string
+          token: string
+          user_id: string
+        }
+        Update: {
+          expires_at?: string
+          id?: string
+          token?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "purchase_account_setup_tokens_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "app_users"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       services: {
         Row: {
           created_at: string

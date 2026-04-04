@@ -27,6 +27,7 @@
 - [ ] **Sign in** with a correct email and password opens the dashboard.
 - [ ] **Wrong password** shows an error and does not open the dashboard.
 - [ ] **Forgot password:** You can request a reset, see confirmation that an email may have been sent, and (using the link from email) set a **new password** and then sign in with it.
+- [ ] **After a purchase (if your team uses it):** The welcome email link opens a **create your password** page; after you choose a password you are **signed in** to the dashboard (or see a clear error if the link expired).
 
 ### Sign up
 
@@ -182,6 +183,8 @@ Log in with a **platform admin** account (your team provides this).
 - [ ] **Pending sign-ups** (if used): You can **approve** or **reject**; approved users can sign in as owners; rejected users cannot access the dashboard inappropriately.
 - [ ] **User and organization management** actions your team cares about (view, disable, delete) work and show confirmations or errors in plain language.
 - [ ] Charts or statistics on the admin dashboard load without errors.
+- [ ] **Plug&Pay sync (if used):** Running the sync behaves as your team expects and new buyers get the right **welcome** experience (no errors only visible in logs).
+- [ ] **Plug&Pay webhook (if used):** After a test purchase on the connected product, the buyer receives the **create password** email (or your team sees a clear log if something failed).
 
 ---
 
@@ -205,6 +208,7 @@ Your team defines which emails must fire. Typical cases:
 - [ ] **Reminder** emails (day before / one hour before) when enabled—use a test booking at a safe time.
 - [ ] **Password reset** email arrives and the link works.
 - [ ] **Staff invite** email content and link work.
+- [ ] **Welcome after purchase (if used):** Email explains next steps; the **create password** link matches your live site address and works once.
 
 ---
 
