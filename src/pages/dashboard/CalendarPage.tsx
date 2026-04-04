@@ -1482,12 +1482,12 @@ function OrphanGcalEventDialog({
     <Dialog open={open} onOpenChange={(o) => !busy && onOpenChange(o)}>
       <DialogContent className="max-w-md max-h-[90vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>Event from Google Calendar</DialogTitle>
+          {/* <DialogTitle>Event from Google Calendar</DialogTitle> */}
         </DialogHeader>
-        <p className="text-sm text-muted-foreground">
+        {/* <p className="text-sm text-muted-foreground">
           This event is only in Google Calendar (for example, from a booking that was deleted while disconnected). Link it
           to a salon booking to manage it like your other appointments, or remove it from Google only.
-        </p>
+        </p> */}
         <div className="rounded-md border bg-muted/30 p-3 text-sm">
           <p className="font-medium break-words">{event.summary}</p>
           <p className="text-muted-foreground">
@@ -1606,7 +1606,7 @@ function OrphanGcalEventDialog({
             </Button>
             <Button variant="destructive" onClick={handleRemove} disabled={busy} className="gap-2">
               {removing && <Loader2 className="h-4 w-4 animate-spin" />}
-              {removing ? "Removing…" : "Remove from Google only"}
+              {removing ? "Removing…" : "Remove"}
             </Button>
           </div>
         </DialogFooter>
