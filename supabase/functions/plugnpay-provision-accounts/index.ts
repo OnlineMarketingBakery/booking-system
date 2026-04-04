@@ -5,6 +5,10 @@ import {
   contactEmail,
   type BillingContact,
 } from "../_shared/plugnpay-provision-buyer.ts";
+import {
+  orderHasAllowedPlugnpayProduct,
+  parseAllowedPlugnpayProductIds,
+} from "../_shared/plugnpay-product-filter.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -119,8 +123,10 @@ Deno.serve(async (req) => {
       page += 1;
     } while (page <= lastPage);
 
+    const allowedProducts = parseAllowedPlugnpayProductIds();
     const emailToContact = new Map<string, BillingContact>();
     for (const order of allOrders) {
+      if (!orderHasAllowedPlugnpayProduct(order, allowedProducts)) continue;
       const c = contactFromOrder(order);
       if (!c) continue;
       const em = contactEmail(c);

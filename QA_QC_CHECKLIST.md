@@ -185,6 +185,7 @@ Log in with a **platform admin** account (your team provides this).
 - [ ] Charts or statistics on the admin dashboard load without errors.
 - [ ] **Plug&Pay sync (if used):** Running the sync behaves as your team expects and new buyers get the right **welcome** experience (no errors only visible in logs).
 - [ ] **Plug&Pay webhook (if used):** After a test purchase on the connected product, the buyer receives the **create password** email (or your team sees a clear log if something failed).
+- [ ] **Plug&Pay product filter (if your team limits sign-up to one product):** A purchase of a **different** product does **not** create an account or send the create-password email; the **allowed** product still does.
 
 ---
 

@@ -6,6 +6,10 @@ import {
   contactEmail,
   type BillingContact,
 } from "../_shared/plugnpay-provision-buyer.ts";
+import {
+  orderHasAllowedPlugnpayProduct,
+  parseAllowedPlugnpayProductIds,
+} from "../_shared/plugnpay-product-filter.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -124,19 +128,43 @@ Deno.serve(async (req) => {
     });
   }
 
-  const orderShape = unwrapOrderFromWebhookPayload(body);
-  let contact: BillingContact | null = null;
+  const allowedProducts = parseAllowedPlugnpayProductIds();
+  const plugKey = Deno.env.get("PLUGNPAY_API_KEY");
 
-  if (orderShape) {
-    contact = resolveContactFromOrderShape(orderShape);
+  let order: Record<string, unknown> | null = unwrapOrderFromWebhookPayload(body);
+  const orderIdEarly =
+    order && (order.id ?? order.uid ?? order.order_id);
+
+  if (order && plugKey && orderIdEarly != null && String(orderIdEarly).length > 0) {
+    const hasItems = Array.isArray(order.items) && order.items.length > 0;
+    if (!hasItems && allowedProducts) {
+      const hydrated = await fetchOrderFromPlugnpayApi(String(orderIdEarly), plugKey);
+      if (hydrated) order = hydrated;
+    }
+  }
+
+  if (allowedProducts && order && !orderHasAllowedPlugnpayProduct(order, allowedProducts)) {
+    return new Response(
+      JSON.stringify({
+        ok: true,
+        skipped: true,
+        reason: "product_not_in_allowlist",
+      }),
+      { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+    );
+  }
+
+  let contact: BillingContact | null = null;
+  if (order) {
+    contact = resolveContactFromOrderShape(order);
   }
 
   if (!contact || !contactEmail(contact)) {
-    const plugKey = Deno.env.get("PLUGNPAY_API_KEY");
-    const id = orderShape && (orderShape.id ?? orderShape.uid ?? orderShape.order_id);
+    const id = order && (order.id ?? order.uid ?? order.order_id);
     if (plugKey && id != null && String(id).length > 0) {
       const hydrated = await fetchOrderFromPlugnpayApi(String(id), plugKey);
       if (hydrated) {
+        order = hydrated;
         contact = resolveContactFromOrderShape(hydrated);
       }
     }
