@@ -229,6 +229,7 @@ function collectSlotsForCalendarDay(
   const slots: CalendarSlot[] = [];
 
   if (gcalConnected) {
+    const gcalSlots: CalendarSlot[] = [];
     for (const e of gcalEvents || []) {
       if (!e.start) continue;
       const eStart = new Date(e.start);
@@ -242,7 +243,7 @@ function collectSlotsForCalendarDay(
         String(locationId) !== String(firstLocationId)
       )
         continue;
-      slots.push({
+      gcalSlots.push({
         id: e.id || `gcal-${e.start}`,
         source: "gcal",
         summary: e.summary || "Event",
@@ -253,7 +254,29 @@ function collectSlotsForCalendarDay(
         organizationId: e.organization_id ?? undefined,
       });
     }
-    return slots;
+    const gcalEventIdsShown = new Set(gcalSlots.map((s) => String(s.id)));
+
+    const bookingsForThisLocation = locationId
+      ? orgBookings.filter((b: any) => String(b.location_id) === String(locationId))
+      : orgBookings;
+
+    const dbSlots: CalendarSlot[] = [];
+    for (const b of bookingsForThisLocation) {
+      const start = new Date(b.start_time);
+      const end = new Date(b.end_time);
+      if (!slotBelongsToCalendarDay(day, start, end)) continue;
+      if (b.gcal_event_id && gcalEventIdsShown.has(String(b.gcal_event_id))) continue;
+      const svc = b.services as { name?: string } | null;
+      const staffName = (b.staff as { name?: string } | null)?.name;
+      dbSlots.push({
+        id: b.id,
+        source: "booking",
+        summary: [b.customer_name, svc?.name, staffName].filter(Boolean).join(" · ") || "Booking",
+        start: b.start_time,
+        end: b.end_time,
+      });
+    }
+    return [...gcalSlots, ...dbSlots];
   }
 
   const bookingsForThisLocation = locationId
@@ -617,19 +640,24 @@ export default function CalendarPage() {
     isLoading: gcalLoading,
     refetch: refetchGcal,
   } = useQuery({
-    queryKey: ["gcal-events", user?.id, rangeStart],
+    queryKey: ["gcal-events", organization?.id, user?.id, rangeStart],
     queryFn: async () => {
       const { data, error } = await supabase.functions.invoke("fetch-gcal-events", {
         body: {
           user_id: user!.id,
+          organization_id: organization!.id,
           time_min: rangeStart,
           time_max: rangeEnd,
         },
       });
       if (error) throw error;
+      const rec = data?.gcal_reconcile as { cancelled?: number } | undefined;
+      if (rec && typeof rec.cancelled === "number" && rec.cancelled > 0) {
+        void queryClient.invalidateQueries({ queryKey: ["calendar-bookings"] });
+      }
       return data?.events || [];
     },
-    enabled: !!user && !!gcalConnected,
+    enabled: !!user && !!gcalConnected && !!organization?.id,
     refetchOnWindowFocus: true,
     refetchInterval: 45 * 1000,
     staleTime: 0,
@@ -1687,6 +1715,31 @@ function ManageBookingDialog({
         .update({ status: status as any })
         .eq("id", booking.id);
       if (error) throw error;
+      if (gcalConnected && status === "cancelled" && booking.gcal_event_id) {
+        const orgId = booking.organization_id ?? null;
+        const { error: delErr } = await supabase.functions.invoke("delete-gcal-event", {
+          body: orgId
+            ? { event_id: booking.gcal_event_id, organization_id: orgId }
+            : { event_id: booking.gcal_event_id, user_id: userId },
+        });
+        if (delErr) {
+          console.error("delete-gcal-event after cancel:", delErr);
+        } else {
+          const { error: clearErr } = await supabase
+            .from("bookings")
+            .update({ gcal_event_id: null })
+            .eq("id", booking.id);
+          if (clearErr) console.error("clear gcal_event_id after cancel:", clearErr);
+        }
+      } else if (
+        gcalConnected &&
+        (status === "confirmed" || status === "paid" || status === "pending")
+      ) {
+        const { error: fnErr } = await supabase.functions.invoke("sync-booking-to-gcal", {
+          body: { booking_id: booking.id },
+        });
+        if (fnErr) console.error("sync-booking-to-gcal after status change:", fnErr);
+      }
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["calendar-bookings"] });

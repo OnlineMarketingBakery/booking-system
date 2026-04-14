@@ -14,6 +14,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { Loader2, CalendarDays, Search } from "lucide-react";
 import { format, startOfDay, isBefore } from "date-fns";
 import { toast } from "@/hooks/use-toast";
+import { useAuth } from "@/contexts/AuthContext";
 
 const STATUS_COLORS: Record<string, string> = {
   pending: "bg-warning/20 text-warning-foreground border-warning/30",
@@ -26,6 +27,7 @@ const STATUS_COLORS: Record<string, string> = {
 
 export default function Bookings() {
   const { organization } = useOrganization();
+  const { user } = useAuth();
   const queryClient = useQueryClient();
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("all");
@@ -38,13 +40,27 @@ export default function Bookings() {
     queryFn: async () => {
       const { data, error } = await supabase
         .from("bookings")
-        .select("*, services(name, duration_minutes, price, currency, vat_rates(name, percentage)), staff(name), locations(name)")
+        .select("*, services(name, duration_minutes, price, currency, vat_rates(name, percentage)), staff(name), locations(name), gcal_event_id")
         .eq("organization_id", organization!.id)
         .order("start_time", { ascending: false });
       if (error) throw error;
       return data;
     },
     enabled: !!organization,
+  });
+
+  const { data: gcalConnected } = useQuery({
+    queryKey: ["gcal-connected-bookings-list", user?.id],
+    queryFn: async () => {
+      const { data } = await supabase
+        .from("google_calendar_tokens")
+        .select("id")
+        .eq("user_id", user!.id)
+        .is("disconnected_at", null)
+        .maybeSingle();
+      return !!data;
+    },
+    enabled: !!user,
   });
 
   const { data: staffList = [] } = useQuery({
@@ -90,12 +106,33 @@ export default function Bookings() {
   });
 
   const statusMutation = useMutation({
-    mutationFn: async ({ id, status }: { id: string; status: string }) => {
+    mutationFn: async ({ id, status, gcal_event_id }: { id: string; status: string; gcal_event_id?: string | null }) => {
       const { error } = await supabase.from("bookings").update({ status: status as any }).eq("id", id);
       if (error) throw error;
+      if (gcalConnected && status === "cancelled" && gcal_event_id && organization?.id) {
+        const { error: delErr } = await supabase.functions.invoke("delete-gcal-event", {
+          body: { event_id: gcal_event_id, organization_id: organization.id },
+        });
+        if (delErr) {
+          console.error("delete-gcal-event after cancel:", delErr);
+        } else {
+          const { error: clearErr } = await supabase.from("bookings").update({ gcal_event_id: null }).eq("id", id);
+          if (clearErr) console.error("clear gcal_event_id after cancel:", clearErr);
+        }
+      } else if (
+        gcalConnected &&
+        (status === "confirmed" || status === "paid" || status === "pending")
+      ) {
+        const { error: fnErr } = await supabase.functions.invoke("sync-booking-to-gcal", {
+          body: { booking_id: id },
+        });
+        if (fnErr) console.error("sync-booking-to-gcal after status change:", fnErr);
+      }
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["all-bookings"] });
+      queryClient.invalidateQueries({ queryKey: ["calendar-bookings"] });
+      queryClient.invalidateQueries({ queryKey: ["gcal-events"] });
       toast({ title: "Status updated" });
     },
   });
@@ -219,7 +256,7 @@ export default function Bookings() {
                           <Button size="sm" variant="outline" onClick={() => { setRescheduleBooking(b); setNewDate(new Date(b.start_time)); setNewTime(format(new Date(b.start_time), "HH:mm")); }}>
                             <CalendarDays className="w-3" /> Reschedule
                           </Button>
-                          <Select onValueChange={(val) => statusMutation.mutate({ id: b.id, status: val })}>
+                          <Select onValueChange={(val) => statusMutation.mutate({ id: b.id, status: val, gcal_event_id: b.gcal_event_id })}>
                             <SelectTrigger className="h-[36px] w-[120px] inline-flex">
                               <SelectValue placeholder="Set status" />
                             </SelectTrigger>

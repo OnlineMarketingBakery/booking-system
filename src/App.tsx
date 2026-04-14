@@ -31,78 +31,10 @@ import ReleaseHoldPage from "./pages/ReleaseHoldPage";
 import GoogleOAuthRedirect from "./pages/GoogleOAuthRedirect";
 import AcceptStaffInvite from "./pages/AcceptStaffInvite";
 import CompletePurchaseSignup from "./pages/CompletePurchaseSignup";
-import { useEffect } from "react";
 
 const queryClient = new QueryClient();
 
 const App = () => {
-
-  useEffect(() => {
-    const getSubscriptionsFromPlugnPay = async () => {
-      const key = import.meta.env.VITE_SALONOROA_AUTH_KEY;
-      if (!key) return;
-  
-      let page = 1;
-      let allSubscriptions = [];
-      let hasMore = true;
-  
-      try {
-        while (hasMore) {
-          const url = new URL("https://api.plugandpay.com/v2/subscriptions");
-  
-          // ✅ Pagination
-          url.searchParams.set("limit", "100");
-          url.searchParams.set("page", page.toString());
-  
-          // ✅ Correct includes for subscriptions
-          url.searchParams.set(
-            "include",
-            "billing,product,pricing,product_images,tags,trial,utm"
-          );
-  
-          // ✅ Optional filters (use if needed)
-          url.searchParams.set("mode", "all"); // test | live | all
-          // url.searchParams.set("status", "active"); // active | cancelled | etc.
-          // url.searchParams.set("type", "subscription"); // optional
-  
-          const response = await fetch(url.toString(), {
-            headers: {
-              Authorization: `Bearer ${key}`,
-              Accept: "application/json",
-            },
-          });
-  
-          if (!response.ok) {
-            console.warn(
-              "Plug&Pay subscriptions error:",
-              response.status,
-              await response.text()
-            );
-            break;
-          }
-  
-          const result = await response.json();
-  
-          // ✅ Merge data
-          allSubscriptions = [...allSubscriptions, ...result.data];
-  
-          // ✅ Pagination handling (safe)
-          if (page >= result.meta.last_page) {
-            hasMore = false;
-          } else {
-            page++;
-          }
-        }
-  
-        console.log("✅ All Subscriptions:", allSubscriptions);
-      } catch (error) {
-        console.error("❌ Fetch error:", error);
-      }
-    };
-  
-    void getSubscriptionsFromPlugnPay();
-  }, []);
-
   return (
   <QueryClientProvider client={queryClient}>
     <TooltipProvider>
