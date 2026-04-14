@@ -50,7 +50,12 @@ Deno.serve(async (req) => {
   }
 
   try {
-    let body: { user_id?: string; organization_id?: string; time_min?: string; time_max?: string } = {};
+    let body: {
+      user_id?: string;
+      organization_id?: string;
+      time_min?: string;
+      time_max?: string;
+    } = {};
     try {
       body = await req.json();
     } catch {
@@ -71,20 +76,25 @@ Deno.serve(async (req) => {
 
     const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
-    // Google `primary` + sync-booking-to-gcal use the **organization owner's** tokens. Staff may
-    // pass their own user_id; we must still use the owner's account for list/get/reconcile.
-    let googleUserId: string | null = null;
+    let ownerId: string | null = null;
     if (organization_id) {
       const { data: orgRow } = await supabase
         .from("organizations")
         .select("owner_id")
         .eq("id", organization_id)
         .single();
-      googleUserId = orgRow?.owner_id ?? null;
+      ownerId = orgRow?.owner_id ?? null;
     }
-    if (!googleUserId) {
-      googleUserId = bodyUserId ?? null;
+
+    /** Calendar user whose primary calendar we read (owner for org-scoped public booking). */
+    let googleUserId: string | null = null;
+
+    if (organization_id && ownerId) {
+      googleUserId = ownerId;
+    } else if (bodyUserId) {
+      googleUserId = bodyUserId;
     }
+
     if (!googleUserId) {
       return new Response(JSON.stringify({ events: [], connected: false }), {
         status: 200,
@@ -153,59 +163,8 @@ Deno.serve(async (req) => {
     // Same window as list(): only bookings starting in this range are checked. For each, GET the
     // event by id — 404/410 means it was removed in Google → cancel Salonora row (old code wrongly
     // inferred deletion from "not in list()" and deleted unrelated weeks).
-    const tmMin = params.get("timeMin")!;
-    const tmMax = params.get("timeMax")!;
-    let reconcileOrgIds: string[] = [];
-    if (organization_id) {
-      reconcileOrgIds = [organization_id];
-    } else {
-      const { data: orgsForReconcile } = await supabase
-        .from("organizations")
-        .select("id")
-        .eq("owner_id", googleUserId);
-      reconcileOrgIds = (orgsForReconcile || []).map((o: { id: string }) => o.id);
-    }
+    /** One-way sync: Salonora updates Google; we do not cancel or modify bookings from Google Calendar changes. */
     const gcal_reconcile = { checked: 0, cancelled: 0 };
-    const MAX_RECONCILE = 80;
-    if (reconcileOrgIds.length > 0) {
-      const { data: syncRows } = await supabase
-        .from("bookings")
-        .select("id, gcal_event_id")
-        .in("organization_id", reconcileOrgIds)
-        .not("gcal_event_id", "is", null)
-        .in("status", ["pending", "confirmed", "paid"])
-        .lt("start_time", tmMax)
-        .gt("end_time", tmMin)
-        .limit(MAX_RECONCILE);
-
-      for (const b of syncRows || []) {
-        const evId = b.gcal_event_id as string;
-        if (!evId) continue;
-        gcal_reconcile.checked++;
-        const evUrl =
-          `https://www.googleapis.com/calendar/v3/calendars/primary/events/${encodeURIComponent(evId)}`;
-        const evRes = await fetch(evUrl, {
-          headers: { Authorization: `Bearer ${accessToken}` },
-        });
-        let shouldCancel = evRes.status === 404 || evRes.status === 410;
-        if (evRes.ok) {
-          try {
-            const ej = (await evRes.json()) as { status?: string };
-            if (ej?.status === "cancelled") shouldCancel = true;
-          } catch {
-            /* ignore parse errors */
-          }
-        }
-        if (shouldCancel) {
-          const { error: upErr } = await supabase
-            .from("bookings")
-            .update({ status: "cancelled", gcal_event_id: null })
-            .eq("id", b.id as string)
-            .in("status", ["pending", "confirmed", "paid"]);
-          if (!upErr) gcal_reconcile.cancelled++;
-        }
-      }
-    }
 
     return new Response(JSON.stringify({ events, connected: true, gcal_reconcile }), {
       status: 200,

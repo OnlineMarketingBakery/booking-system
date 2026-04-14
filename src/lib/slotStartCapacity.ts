@@ -49,3 +49,34 @@ export function isWallIntervalAvailableForBooking(opts: {
   }
   return eligibleStaffIds.some((sid) => !overlapping.some((r) => r.staff_id === sid || r.staff_id === null));
 }
+
+/** First eligible stylist free for the interval; else owner placeholder when there are no real staff. */
+export function pickAutoStaffIdForInterval(opts: {
+  rows: OccupancyRow[];
+  intervalStartMs: number;
+  intervalEndMs: number;
+  eligibleStaffIds: string[];
+  realStaffIds: string[];
+  ownerDefaultStaffId: string | null;
+}): string | null {
+  const { rows, intervalStartMs, intervalEndMs, eligibleStaffIds, realStaffIds, ownerDefaultStaffId } = opts;
+  if (realStaffIds.length === 0) {
+    return ownerDefaultStaffId ?? null;
+  }
+  const sorted = [...new Set(eligibleStaffIds)].sort();
+  for (const sid of sorted) {
+    if (
+      isWallIntervalAvailableForBooking({
+        rows,
+        intervalStartMs,
+        intervalEndMs,
+        eligibleStaffIds: [sid],
+        locationHasNoStaff: false,
+        requestedStaffId: sid,
+      })
+    ) {
+      return sid;
+    }
+  }
+  return null;
+}

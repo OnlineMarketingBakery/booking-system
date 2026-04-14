@@ -67,7 +67,9 @@ Deno.serve(async (req) => {
     // Get booking with org info (include gcal_event_id to skip already-synced)
     const { data: booking, error: bErr } = await supabase
       .from("bookings")
-      .select("*, services(name), staff(name), locations(name), organizations(owner_id), gcal_event_id")
+      .select(
+        "*, services(name), staff(name, gcal_secondary_calendar_id, is_owner_placeholder), locations(name), organizations(owner_id, timezone, gcal_use_staff_secondary_calendars), gcal_event_id, gcal_calendar_id",
+      )
       .eq("id", booking_id)
       .single();
 
@@ -86,7 +88,10 @@ Deno.serve(async (req) => {
       });
     }
 
-    const accessToken = await getValidAccessToken(supabase, ownerId, GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET);
+    /** All sync uses the salon owner's Google account (one calendar / optional staff sub-calendars). */
+    const calendarUserId = ownerId as string;
+
+    const accessToken = await getValidAccessToken(supabase, calendarUserId, GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET);
     if (!accessToken) {
       return new Response(JSON.stringify({ skipped: true, reason: "No Google Calendar connected" }), {
         status: 200,
@@ -94,11 +99,28 @@ Deno.serve(async (req) => {
       });
     }
 
+    const orgRow = booking.organizations as {
+      timezone?: string | null;
+      gcal_use_staff_secondary_calendars?: boolean | null;
+    } | null;
+    const orgTz = (orgRow?.timezone && String(orgRow.timezone).trim()) || "Europe/Amsterdam";
+    const useStaffLayers = !!orgRow?.gcal_use_staff_secondary_calendars;
+    const staffRow = booking.staff as {
+      gcal_secondary_calendar_id?: string | null;
+      is_owner_placeholder?: boolean | null;
+    } | null;
+    const secondaryCal =
+      useStaffLayers && staffRow && !staffRow.is_owner_placeholder && staffRow.gcal_secondary_calendar_id
+        ? String(staffRow.gcal_secondary_calendar_id).trim()
+        : "";
+    const storedCalId = ((booking as { gcal_calendar_id?: string | null }).gcal_calendar_id ?? "").trim();
+    const calendarIdForApi = storedCalId || (secondaryCal || "primary");
+
     const gcalEventBody = {
       summary: `${booking.customer_name} — ${(booking.services as any)?.name || "Appointment"}`,
       description: `Staff: ${(booking.staff as any)?.name || "—"}\nLocation: ${(booking.locations as any)?.name || "—"}\nEmail: ${booking.customer_email}\nPhone: ${booking.customer_phone || "N/A"}\nStatus: ${booking.status}`,
-      start: { dateTime: booking.start_time, timeZone: "UTC" },
-      end: { dateTime: booking.end_time, timeZone: "UTC" },
+      start: { dateTime: booking.start_time, timeZone: orgTz },
+      end: { dateTime: booking.end_time, timeZone: orgTz },
       extendedProperties: {
         private: {
           booking_id: booking_id,
@@ -112,10 +134,11 @@ Deno.serve(async (req) => {
       },
     };
 
+    const calPath = encodeURIComponent(calendarIdForApi);
     const existingGcalId = (booking as any).gcal_event_id as string | null;
     if (existingGcalId) {
       const patchRes = await fetch(
-        `https://www.googleapis.com/calendar/v3/calendars/primary/events/${encodeURIComponent(existingGcalId)}?sendUpdates=all`,
+        `https://www.googleapis.com/calendar/v3/calendars/${calPath}/events/${encodeURIComponent(existingGcalId)}?sendUpdates=all`,
         {
           method: "PATCH",
           headers: {
@@ -143,7 +166,7 @@ Deno.serve(async (req) => {
     const { data: lastDisconnect } = await supabase
       .from("gcal_disconnect_log")
       .select("disconnected_at")
-      .eq("user_id", ownerId)
+      .eq("user_id", calendarUserId)
       .order("disconnected_at", { ascending: false })
       .limit(1)
       .maybeSingle();
@@ -156,7 +179,7 @@ Deno.serve(async (req) => {
       });
     }
 
-    const gcalRes = await fetch("https://www.googleapis.com/calendar/v3/calendars/primary/events?sendUpdates=all", {
+    const gcalRes = await fetch(`https://www.googleapis.com/calendar/v3/calendars/${calPath}/events?sendUpdates=all`, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${accessToken}`,
@@ -174,7 +197,10 @@ Deno.serve(async (req) => {
       });
     }
 
-    const { error: updateErr } = await supabase.from("bookings").update({ gcal_event_id: gcalData.id }).eq("id", booking_id);
+    const { error: updateErr } = await supabase
+      .from("bookings")
+      .update({ gcal_event_id: gcalData.id, gcal_calendar_id: calendarIdForApi === "primary" ? null : calendarIdForApi })
+      .eq("id", booking_id);
     if (updateErr) {
       // Column may not exist yet (migration not run)
     }

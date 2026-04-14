@@ -7,12 +7,21 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Settings, Pencil, Loader2, Lock, Users, Trash2, Percent } from "lucide-react";
+import { Settings, Pencil, Loader2, Lock, Users, Trash2, Percent, Calendar } from "lucide-react";
 import { Link } from "react-router-dom";
 import { useEffect, useState } from "react";
 import { useToast } from "@/hooks/use-toast";
 import { useSpamProtection } from "@/hooks/useSpamProtection";
 import { HOLIDAY_REGION_OPTIONS } from "@/lib/holidays";
+
+const ORG_TIMEZONE_OPTIONS: { value: string; label: string }[] = [
+  { value: "Europe/Amsterdam", label: "Amsterdam (CET/CEST)" },
+  { value: "Europe/Brussels", label: "Brussels" },
+  { value: "Europe/London", label: "London" },
+  { value: "Europe/Paris", label: "Paris" },
+  { value: "Europe/Berlin", label: "Berlin" },
+  { value: "UTC", label: "UTC" },
+];
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { SpamProtectionFields } from "@/components/SpamProtectionFields";
 import { useQueryClient } from "@tanstack/react-query";
@@ -176,6 +185,7 @@ export default function SettingsPage() {
         .select("id, name, phone")
         .eq("organization_id", organization.id)
         .eq("is_active", true)
+        .or("is_owner_placeholder.eq.false,is_owner_placeholder.is.null")
         .order("created_at");
       if (error) throw error;
       return data ?? [];
@@ -186,8 +196,22 @@ export default function SettingsPage() {
   const fireStaff = useMutation({
     mutationFn: async (staffId: string) => {
       if (!organization) throw new Error("No organization");
-      const { error: bookingsError } = await supabase.from("bookings").update({ staff_id: null }).eq("staff_id", staffId).eq("organization_id", organization.id);
-      if (bookingsError) throw bookingsError;
+      const ownerPh = organization.owner_default_staff_id ?? null;
+      if (ownerPh) {
+        const { error: bookingsError } = await supabase
+          .from("bookings")
+          .update({ staff_id: ownerPh })
+          .eq("staff_id", staffId)
+          .eq("organization_id", organization.id);
+        if (bookingsError) throw bookingsError;
+      } else {
+        const { error: bookingsError } = await supabase
+          .from("bookings")
+          .update({ staff_id: null })
+          .eq("staff_id", staffId)
+          .eq("organization_id", organization.id);
+        if (bookingsError) throw bookingsError;
+      }
       const { error } = await supabase.from("staff").update({ is_active: false }).eq("id", staffId).eq("organization_id", organization.id);
       if (error) throw error;
     },
@@ -196,7 +220,10 @@ export default function SettingsPage() {
       queryClient.invalidateQueries({ queryKey: ["staff-locations"] });
       queryClient.invalidateQueries({ queryKey: ["all-bookings"] });
       setStaffToFire(null);
-      toast({ title: "Staff removed", description: "They will no longer appear for new bookings. Their bookings are now unassigned." });
+      toast({
+        title: "Staff removed",
+        description: "They will no longer appear for new bookings. Their bookings were moved to the salon default assignee when available.",
+      });
     },
     onError: (err: unknown) =>
       toast({ title: "Error", description: err instanceof Error ? err.message : "Could not remove staff", variant: "destructive" }),
@@ -397,6 +424,96 @@ export default function SettingsPage() {
                   </SelectContent>
                 </Select>
               </div> */}
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Calendar className="h-5 w-5 text-primary" />
+                Time zone & Google Calendar
+              </CardTitle>
+              <CardDescription>
+                Used for confirmation emails and Google Calendar events. Bookings update Google Calendar only (editing
+                Google does not change appointments in Salonora).
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4 max-w-xl text-sm">
+              <div className="space-y-2">
+                <Label>Salon time zone</Label>
+                <Select
+                  value={(organization as { timezone?: string }).timezone ?? "Europe/Amsterdam"}
+                  onValueChange={async (v) => {
+                    if (!organization) return;
+                    const { error } = await supabase.from("organizations").update({ timezone: v }).eq("id", organization.id);
+                    if (error) toast({ title: "Error", description: error.message, variant: "destructive" });
+                    else {
+                      queryClient.invalidateQueries({ queryKey: ["organization"] });
+                      toast({ title: "Time zone updated" });
+                    }
+                  }}
+                >
+                  <SelectTrigger className="bg-background">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {ORG_TIMEZONE_OPTIONS.map((o) => (
+                      <SelectItem key={o.value} value={o.value}>
+                        {o.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="flex items-start gap-3 rounded-md border p-3">
+                <Checkbox
+                  id="gcal-layers"
+                  checked={!!(organization as { gcal_use_staff_secondary_calendars?: boolean }).gcal_use_staff_secondary_calendars}
+                  onCheckedChange={async (c) => {
+                    if (!organization) return;
+                    const { error } = await supabase
+                      .from("organizations")
+                      .update({ gcal_use_staff_secondary_calendars: !!c })
+                      .eq("id", organization.id);
+                    if (error) toast({ title: "Error", description: error.message, variant: "destructive" });
+                    else {
+                      queryClient.invalidateQueries({ queryKey: ["organization"] });
+                      toast({ title: "Calendar preference saved" });
+                    }
+                  }}
+                />
+                <div>
+                  <Label htmlFor="gcal-layers" className="cursor-pointer font-medium">
+                    Separate Google calendar per staff member
+                  </Label>
+                  <p className="text-muted-foreground text-xs mt-1">
+                    When enabled, each staff member can have a dedicated Google calendar (Salonora — name) under your
+                    connected account for clearer scheduling. Create those calendars with the button below after
+                    enabling. All bookings still use the connected Google account.
+                  </p>
+                </div>
+              </div>
+              <Button
+                type="button"
+                variant="secondary"
+                disabled={!(organization as { gcal_use_staff_secondary_calendars?: boolean }).gcal_use_staff_secondary_calendars}
+                onClick={async () => {
+                  if (!organization) return;
+                  const { data, error } = await supabase.functions.invoke("ensure-staff-gcal-calendars", {
+                    body: { organization_id: organization.id },
+                  });
+                  if (error) toast({ title: "Error", description: error.message, variant: "destructive" });
+                  else {
+                    queryClient.invalidateQueries({ queryKey: ["staff"] });
+                    toast({
+                      title: "Calendars",
+                      description: `Created ${(data as { created?: number })?.created ?? 0} calendar(s).`,
+                    });
+                  }
+                }}
+              >
+                Create staff calendars in Google
+              </Button>
             </CardContent>
           </Card>
 

@@ -22,7 +22,7 @@ import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
 import { useSpamProtection } from "@/hooks/useSpamProtection";
 import { SpamProtectionFields } from "@/components/SpamProtectionFields";
-import { Plus, Users, Trash2, Loader2, KeyRound, MapPin, Pencil } from "lucide-react";
+import { Plus, Users, Loader2, KeyRound, MapPin, Pencil, UserX, RotateCcw } from "lucide-react";
 import { StaffLocationAssignment } from "@/components/StaffLocationAssignment";
 
 export default function Staff() {
@@ -30,9 +30,14 @@ export default function Staff() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [open, setOpen] = useState(false);
-  const [editingStaff, setEditingStaff] = useState<{ id: string; name: string; phone: string | null } | null>(null);
+  const [editingStaff, setEditingStaff] = useState<{
+    id: string;
+    name: string;
+    phone: string | null;
+    email: string | null;
+  } | null>(null);
   const [selectedLocationId, setSelectedLocationId] = useState("");
-  const [staffToRemove, setStaffToRemove] = useState<{ id: string; name: string } | null>(null);
+  const [staffToDeactivate, setStaffToDeactivate] = useState<{ id: string; name: string } | null>(null);
   const { validateSpamProtection, SpamProtectionFieldsProps } = useSpamProtection();
 
   const { data: locations = [] } = useQuery({
@@ -56,19 +61,37 @@ export default function Staff() {
         .from("staff")
         .select("*")
         .eq("organization_id", organization!.id)
-        .eq("is_active", true)
+        .or("is_owner_placeholder.eq.false,is_owner_placeholder.is.null")
         .order("created_at");
       if (error) throw error;
-      return data;
+      return data ?? [];
     },
     enabled: !!organization,
   });
 
+  const activeTeam = staff.filter((s) => s.is_active);
+  const inactiveTeam = staff.filter((s) => !s.is_active);
+
   const addStaff = useMutation({
-    mutationFn: async ({ name, phone, locationId }: { name: string; phone: string; locationId?: string }) => {
+    mutationFn: async ({
+      name,
+      phone,
+      email,
+      locationId,
+    }: {
+      name: string;
+      phone: string;
+      email: string | null;
+      locationId?: string;
+    }) => {
       const { data: newStaff, error } = await supabase
         .from("staff")
-        .insert({ name, phone: phone || null, organization_id: organization!.id })
+        .insert({
+          name,
+          phone: phone || null,
+          email: email?.trim() || null,
+          organization_id: organization!.id,
+        })
         .select()
         .single();
       if (error) throw error;
@@ -94,10 +117,24 @@ export default function Staff() {
   });
 
   const updateStaff = useMutation({
-    mutationFn: async ({ id, name, phone }: { id: string; name: string; phone: string | null }) => {
+    mutationFn: async ({
+      id,
+      name,
+      phone,
+      email,
+    }: {
+      id: string;
+      name: string;
+      phone: string | null;
+      email: string | null;
+    }) => {
       const { error } = await supabase
         .from("staff")
-        .update({ name: name.trim(), phone: phone?.trim() || null })
+        .update({
+          name: name.trim(),
+          phone: phone?.trim() || null,
+          email: email?.trim() || null,
+        })
         .eq("id", id);
       if (error) throw error;
     },
@@ -109,10 +146,24 @@ export default function Staff() {
     onError: (err: any) => toast({ title: "Error", description: err.message, variant: "destructive" }),
   });
 
-  const deleteStaff = useMutation({
+  const deactivateStaff = useMutation({
     mutationFn: async (id: string) => {
-      const { error: bookingsError } = await supabase.from("bookings").update({ staff_id: null }).eq("staff_id", id);
-      if (bookingsError) throw bookingsError;
+      const ownerPh = organization?.owner_default_staff_id ?? null;
+      if (ownerPh) {
+        const { error: bookingsError } = await supabase
+          .from("bookings")
+          .update({ staff_id: ownerPh })
+          .eq("staff_id", id)
+          .eq("organization_id", organization!.id);
+        if (bookingsError) throw bookingsError;
+      } else {
+        const { error: bookingsError } = await supabase
+          .from("bookings")
+          .update({ staff_id: null })
+          .eq("staff_id", id)
+          .eq("organization_id", organization!.id);
+        if (bookingsError) throw bookingsError;
+      }
       const { error } = await supabase.from("staff").update({ is_active: false }).eq("id", id);
       if (error) throw error;
     },
@@ -120,13 +171,38 @@ export default function Staff() {
       queryClient.invalidateQueries({ queryKey: ["staff"] });
       queryClient.invalidateQueries({ queryKey: ["staff-locations"] });
       queryClient.invalidateQueries({ queryKey: ["all-bookings"] });
-      setStaffToRemove(null);
-      toast({ title: "Staff removed", description: "They won't appear for new bookings. Their bookings are now unassigned." });
+      setStaffToDeactivate(null);
+      toast({
+        title: "Staff deactivated",
+        description: "They no longer appear in the booking widget. Existing bookings were moved to the salon default assignee where possible.",
+      });
     },
     onError: (err: unknown) =>
       toast({
         title: "Error",
-        description: err instanceof Error ? err.message : "Could not remove staff.",
+        description: err instanceof Error ? err.message : "Could not deactivate staff.",
+        variant: "destructive",
+      }),
+  });
+
+  const reactivateStaff = useMutation({
+    mutationFn: async (id: string) => {
+      const { error } = await supabase
+        .from("staff")
+        .update({ is_active: true })
+        .eq("id", id)
+        .eq("organization_id", organization!.id);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["staff"] });
+      queryClient.invalidateQueries({ queryKey: ["staff-locations"] });
+      toast({ title: "Staff reactivated" });
+    },
+    onError: (err: unknown) =>
+      toast({
+        title: "Error",
+        description: err instanceof Error ? err.message : "Could not reactivate staff.",
         variant: "destructive",
       }),
   });
@@ -141,6 +217,7 @@ export default function Staff() {
     addStaff.mutate({
       name: (form.get("name") as string).trim(),
       phone: (form.get("phone") as string)?.trim() ?? "",
+      email: ((form.get("email") as string) ?? "").trim() || null,
       ...(selectedLocationId ? { locationId: selectedLocationId } : {}),
     });
   };
@@ -153,6 +230,7 @@ export default function Staff() {
       id: editingStaff.id,
       name: (form.get("editName") as string).trim(),
       phone: (form.get("editPhone") as string)?.trim() || null,
+      email: ((form.get("editEmail") as string) ?? "").trim() || null,
     });
   };
 
@@ -178,6 +256,10 @@ export default function Staff() {
               <div className="space-y-2">
                 <Label>Phone (optional)</Label>
                 <Input name="phone" placeholder="+1 234 567 890" maxLength={20} pattern="[\+\d\s\-\(\)]*" title="Enter a valid phone number" />
+              </div>
+              <div className="space-y-2">
+                <Label>Email (optional)</Label>
+                <Input name="email" type="email" placeholder="jane@example.com" maxLength={255} />
               </div>
 
               <div className="space-y-2">
@@ -213,13 +295,16 @@ export default function Staff() {
         </Dialog>
       </div>
 
-      <AlertDialog open={!!staffToRemove} onOpenChange={(open) => !open && setStaffToRemove(null)}>
+      <AlertDialog open={!!staffToDeactivate} onOpenChange={(open) => !open && setStaffToDeactivate(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Remove staff member?</AlertDialogTitle>
+            <AlertDialogTitle>Deactivate staff member?</AlertDialogTitle>
             <AlertDialogDescription>
-              {staffToRemove && (
-                <>Remove <strong>{staffToRemove.name}</strong> from your staff? They will no longer appear for new bookings. Existing bookings will still show their name.</>
+              {staffToDeactivate && (
+                <>
+                  Deactivate <strong>{staffToDeactivate.name}</strong>? They will disappear from the public booking flow. Bookings assigned to them
+                  will be reassigned to your salon default inbox when one is configured.
+                </>
               )}
             </AlertDialogDescription>
           </AlertDialogHeader>
@@ -227,11 +312,11 @@ export default function Staff() {
             <AlertDialogCancel>Cancel</AlertDialogCancel>
             <AlertDialogAction
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-              onClick={() => staffToRemove && deleteStaff.mutate(staffToRemove.id)}
-              disabled={deleteStaff.isPending}
+              onClick={() => staffToDeactivate && deactivateStaff.mutate(staffToDeactivate.id)}
+              disabled={deactivateStaff.isPending}
             >
-              {deleteStaff.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-              Remove
+              {deactivateStaff.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+              Deactivate
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -262,6 +347,16 @@ export default function Staff() {
                   defaultValue={editingStaff.phone ?? ""}
                 />
               </div>
+              <div className="space-y-2">
+                <Label>Email (optional)</Label>
+                <Input
+                  name="editEmail"
+                  type="email"
+                  placeholder="jane@example.com"
+                  maxLength={255}
+                  defaultValue={editingStaff.email ?? ""}
+                />
+              </div>
               <div className="flex gap-2">
                 <Button type="button" variant="outline" className="flex-1" onClick={() => setEditingStaff(null)}>Cancel</Button>
                 <Button type="submit" className="flex-1" disabled={updateStaff.isPending}>
@@ -279,46 +374,98 @@ export default function Staff() {
       ) : staff.length === 0 ? (
         <Card><CardContent className="py-8 text-center text-muted-foreground">No staff yet. Add your first team member.</CardContent></Card>
       ) : (
-        <div className="grid gap-4 grid-cols-1 md:grid-cols-2 lg:grid-cols-3">
-          {staff.map((s) => (
-              <Card key={s.id}>
-                <CardHeader className="flex flex-row items-start justify-between pb-2">
-                  <div className="flex items-center gap-3">
-                    <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary/10">
-                      <Users className="h-4 w-4 text-primary" />
-                    </div>
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <CardTitle className="text-base">{s.name}</CardTitle>
-                        {s.user_id && (
-                          <Badge variant="outline" className="text-xs bg-primary/10 text-primary border-primary/30">
-                            <KeyRound className="h-3 w-3 mr-1" />
-                            Account
-                          </Badge>
-                        )}
+        <div className="space-y-8">
+          {activeTeam.length > 0 && (
+            <div className="grid gap-4 grid-cols-1 md:grid-cols-2 lg:grid-cols-3">
+              {activeTeam.map((s) => (
+                <Card key={s.id}>
+                  <CardHeader className="flex flex-row items-start justify-between pb-2">
+                    <div className="flex items-center gap-3">
+                      <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary/10">
+                        <Users className="h-4 w-4 text-primary" />
                       </div>
-                      {s.phone && <p className="text-sm text-muted-foreground">{s.phone}</p>}
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <CardTitle className="text-base">{s.name}</CardTitle>
+                          {s.user_id && (
+                            <Badge variant="outline" className="text-xs bg-primary/10 text-primary border-primary/30">
+                              <KeyRound className="h-3 w-3 mr-1" />
+                              Account
+                            </Badge>
+                          )}
+                        </div>
+                        {s.phone && <p className="text-sm text-muted-foreground">{s.phone}</p>}
+                        {s.email && <p className="text-sm text-muted-foreground">{s.email}</p>}
+                      </div>
                     </div>
-                  </div>
-                  <div className="flex items-center gap-1">
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      onClick={() => setEditingStaff({ id: s.id, name: s.name, phone: s.phone })}
-                      aria-label="Edit staff"
-                    >
-                      <Pencil className="h-4 w-4 text-muted-foreground" />
-                    </Button>
-                    <Button className="hover:bg-destructive/10" variant="ghost" size="icon" onClick={() => setStaffToRemove({ id: s.id, name: s.name })}>
-                      <Trash2 className="h-4 w-4 text-destructive" />
-                    </Button>
-                  </div>
-                </CardHeader>
-                <CardContent className="pt-0">
-                  <StaffLocationAssignment staffId={s.id} />
-                </CardContent>
-              </Card>
-          ))}
+                    <div className="flex items-center gap-1">
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={() =>
+                          setEditingStaff({
+                            id: s.id,
+                            name: s.name,
+                            phone: s.phone,
+                            email: (s as { email?: string | null }).email ?? null,
+                          })
+                        }
+                        aria-label="Edit staff"
+                      >
+                        <Pencil className="h-4 w-4 text-muted-foreground" />
+                      </Button>
+                      <Button
+                        className="hover:bg-destructive/10"
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => setStaffToDeactivate({ id: s.id, name: s.name })}
+                        aria-label="Deactivate staff"
+                      >
+                        <UserX className="h-4 w-4 text-destructive" />
+                      </Button>
+                    </div>
+                  </CardHeader>
+                  <CardContent className="pt-0">
+                    <StaffLocationAssignment staffId={s.id} />
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+          )}
+          {inactiveTeam.length > 0 && (
+            <div className="space-y-3">
+              <h2 className="text-lg font-semibold text-muted-foreground">Inactive</h2>
+              <div className="grid gap-4 grid-cols-1 md:grid-cols-2 lg:grid-cols-3">
+                {inactiveTeam.map((s) => (
+                  <Card key={s.id} className="opacity-90 border-dashed">
+                    <CardHeader className="flex flex-row items-start justify-between pb-2">
+                      <div className="flex items-center gap-3">
+                        <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-muted">
+                          <Users className="h-4 w-4 text-muted-foreground" />
+                        </div>
+                        <div>
+                          <CardTitle className="text-base">{s.name}</CardTitle>
+                          <Badge variant="secondary" className="mt-1 text-xs">
+                            Deactivated
+                          </Badge>
+                        </div>
+                      </div>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="shrink-0"
+                        onClick={() => reactivateStaff.mutate(s.id)}
+                        disabled={reactivateStaff.isPending}
+                      >
+                        {reactivateStaff.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <RotateCcw className="h-4 w-4 mr-1" />}
+                        Reactivate
+                      </Button>
+                    </CardHeader>
+                  </Card>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       )}
     </div>

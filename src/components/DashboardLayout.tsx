@@ -2,6 +2,7 @@ import { useEffect } from "react";
 import { Outlet, useLocation, useNavigate } from "react-router-dom";
 import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { DashboardSidebar } from "@/components/DashboardSidebar";
+import { PostSetupWizard } from "@/components/PostSetupWizard";
 import { useAuth } from "@/contexts/AuthContext";
 
 export function DashboardLayout() {
@@ -27,6 +28,7 @@ export function DashboardLayout() {
             </div>
           </header>
           <main className="flex-1 overflow-auto p-6 min-w-0 bg-[#EBF3FE]">
+            <PostSetupWizard />
             <Outlet />
           </main>
         </div>

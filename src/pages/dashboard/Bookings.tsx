@@ -63,12 +63,14 @@ export default function Bookings() {
     enabled: !!user,
   });
 
+  const ownerDefaultStaffId = organization?.owner_default_staff_id ?? null;
+
   const { data: staffList = [] } = useQuery({
     queryKey: ["staff-list", organization?.id],
     queryFn: async () => {
       const { data, error } = await supabase
         .from("staff")
-        .select("id, name")
+        .select("id, name, is_owner_placeholder")
         .eq("organization_id", organization!.id)
         .eq("is_active", true)
         .order("name");
@@ -77,6 +79,9 @@ export default function Bookings() {
     },
     enabled: !!organization,
   });
+
+  const assignableStylists = staffList.filter((s) => !(s as { is_owner_placeholder?: boolean }).is_owner_placeholder);
+  const salonDefaultRow = staffList.find((s) => (s as { is_owner_placeholder?: boolean }).is_owner_placeholder);
 
   const assignStaffMutation = useMutation({
     mutationFn: async ({ id, staff_id }: { id: string; staff_id: string | null }) => {
@@ -227,18 +232,36 @@ export default function Bookings() {
                     <TableCell className="text-muted-foreground text-sm">{vatLabel}</TableCell>
                     <TableCell>
                       <Select
-                        value={b.staff_id ?? "unassigned"}
-                        onValueChange={(val) => assignStaffMutation.mutate({ id: b.id, staff_id: val === "unassigned" ? null : val })}
+                        value={
+                          b.staff_id ??
+                          ownerDefaultStaffId ??
+                          "__none__"
+                        }
+                        onValueChange={(val) =>
+                          assignStaffMutation.mutate({
+                            id: b.id,
+                            staff_id: val === "__none__" ? null : val,
+                          })
+                        }
                         disabled={assignStaffMutation.isPending}
                       >
-                        <SelectTrigger className="h-8 w-[140px]">
+                        <SelectTrigger className="h-8 min-w-[160px] max-w-[220px]">
                           <SelectValue />
                         </SelectTrigger>
                         <SelectContent>
-                          <SelectItem value="unassigned">Unassigned</SelectItem>
-                          {staffList.map((s) => (
-                            <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>
+                          {ownerDefaultStaffId && (
+                            <SelectItem value={ownerDefaultStaffId}>
+                              {salonDefaultRow?.name ?? "Salon (default)"}
+                            </SelectItem>
+                          )}
+                          {assignableStylists.map((s) => (
+                            <SelectItem key={s.id} value={s.id}>
+                              {s.name}
+                            </SelectItem>
                           ))}
+                          {!ownerDefaultStaffId && (
+                            <SelectItem value="__none__">Unassigned</SelectItem>
+                          )}
                         </SelectContent>
                       </Select>
                     </TableCell>

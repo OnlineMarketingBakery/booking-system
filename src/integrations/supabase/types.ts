@@ -137,6 +137,7 @@ export type Database = {
           customer_slot_date: string | null
           customer_slot_time: string | null
           end_time: string
+          gcal_calendar_id: string | null
           gcal_event_id: string | null
           id: string
           location_id: string
@@ -159,6 +160,7 @@ export type Database = {
           customer_slot_date?: string | null
           customer_slot_time?: string | null
           end_time: string
+          gcal_calendar_id?: string | null
           gcal_event_id?: string | null
           id?: string
           location_id: string
@@ -181,6 +183,7 @@ export type Database = {
           customer_slot_date?: string | null
           customer_slot_time?: string | null
           end_time?: string
+          gcal_calendar_id?: string | null
           gcal_event_id?: string | null
           id?: string
           location_id?: string
@@ -620,11 +623,14 @@ export type Database = {
         Row: {
           created_at: string
           embed_theme: Record<string, unknown> | null
+          gcal_use_staff_secondary_calendars: boolean
           holiday_region: string | null
           id: string
           logo_url: string | null
           name: string
+          owner_default_staff_id: string | null
           owner_id: string
+          timezone: string
           reminder_email_day_before: boolean
           reminder_email_hour_before: boolean
           slug: string
@@ -635,11 +641,14 @@ export type Database = {
         Insert: {
           created_at?: string
           embed_theme?: Record<string, unknown> | null
+          gcal_use_staff_secondary_calendars?: boolean
           holiday_region?: string | null
           id?: string
           logo_url?: string | null
           name: string
+          owner_default_staff_id?: string | null
           owner_id: string
+          timezone?: string
           reminder_email_day_before?: boolean
           reminder_email_hour_before?: boolean
           slug: string
@@ -650,11 +659,14 @@ export type Database = {
         Update: {
           created_at?: string
           embed_theme?: Record<string, unknown> | null
+          gcal_use_staff_secondary_calendars?: boolean
           holiday_region?: string | null
           id?: string
           logo_url?: string | null
           name?: string
+          owner_default_staff_id?: string | null
           owner_id?: string
+          timezone?: string
           reminder_email_day_before?: boolean
           reminder_email_hour_before?: boolean
           slug?: string
@@ -788,8 +800,10 @@ export type Database = {
         Row: {
           created_at: string
           email: string | null
+          gcal_secondary_calendar_id: string | null
           id: string
           is_active: boolean
+          is_owner_placeholder: boolean
           name: string
           organization_id: string
           phone: string | null
@@ -799,8 +813,10 @@ export type Database = {
         Insert: {
           created_at?: string
           email?: string | null
+          gcal_secondary_calendar_id?: string | null
           id?: string
           is_active?: boolean
+          is_owner_placeholder?: boolean
           name: string
           organization_id: string
           phone?: string | null
@@ -810,8 +826,10 @@ export type Database = {
         Update: {
           created_at?: string
           email?: string | null
+          gcal_secondary_calendar_id?: string | null
           id?: string
           is_active?: boolean
+          is_owner_placeholder?: boolean
           name?: string
           organization_id?: string
           phone?: string | null
@@ -1016,7 +1034,9 @@ export type Database = {
           holiday_region: string | null
           logo_url: string | null
           name: string | null
+          owner_default_staff_id: string | null
           slug: string | null
+          timezone: string | null
         }
         Insert: {
           id?: string | null
@@ -1024,7 +1044,9 @@ export type Database = {
           holiday_region?: string | null
           logo_url?: string | null
           name?: string | null
+          owner_default_staff_id?: string | null
           slug?: string | null
+          timezone?: string | null
         }
         Update: {
           id?: string | null
@@ -1032,7 +1054,9 @@ export type Database = {
           holiday_region?: string | null
           logo_url?: string | null
           name?: string | null
+          owner_default_staff_id?: string | null
           slug?: string | null
+          timezone?: string | null
         }
         Relationships: []
       }

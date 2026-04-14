@@ -1719,8 +1719,8 @@ function ManageBookingDialog({
         const orgId = booking.organization_id ?? null;
         const { error: delErr } = await supabase.functions.invoke("delete-gcal-event", {
           body: orgId
-            ? { event_id: booking.gcal_event_id, organization_id: orgId }
-            : { event_id: booking.gcal_event_id, user_id: userId },
+            ? { event_id: booking.gcal_event_id, organization_id: orgId, booking_id: booking.id }
+            : { event_id: booking.gcal_event_id, user_id: userId, booking_id: booking.id },
         });
         if (delErr) {
           console.error("delete-gcal-event after cancel:", delErr);
@@ -1758,17 +1758,18 @@ function ManageBookingDialog({
       if (!booking) return;
       const gcalEventId = booking.gcal_event_id ?? null;
       const organizationId = booking.organization_id ?? null;
+      const bookingId = booking.id;
       const { error } = await supabase.from("bookings").delete().eq("id", booking.id);
       if (error) throw error;
-      return { gcalEventId, organizationId };
+      return { gcalEventId, organizationId, bookingId };
     },
     onSuccess: async (data) => {
       if (data?.gcalEventId && (userId || data.organizationId)) {
         try {
           await supabase.functions.invoke("delete-gcal-event", {
             body: data.organizationId
-              ? { event_id: data.gcalEventId, organization_id: data.organizationId }
-              : { event_id: data.gcalEventId, user_id: userId },
+              ? { event_id: data.gcalEventId, organization_id: data.organizationId, booking_id: data.bookingId }
+              : { event_id: data.gcalEventId, user_id: userId, booking_id: data.bookingId },
           });
         } catch (e) {
           console.error("Failed to delete from Google Calendar:", e);

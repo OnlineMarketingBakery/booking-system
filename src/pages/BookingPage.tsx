@@ -14,13 +14,6 @@ import {
   CardDescription,
 } from "@/components/ui/card";
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
@@ -113,7 +106,6 @@ export default function BookingPage() {
   const [step, setStep] = useState<Step>("location");
   const [selectedLocation, setSelectedLocation] = useState<string>("");
   const [selectedServices, setSelectedServices] = useState<string[]>([]);
-  const [selectedStaff, setSelectedStaff] = useState<string>("");
   const [selectedTime, setSelectedTime] = useState<string>("");
   const [selectedDate, setSelectedDate] = useState<string>(
     format(new Date(), "yyyy-MM-dd"),
@@ -150,7 +142,7 @@ export default function BookingPage() {
     queryFn: async () => {
       const { data, error } = await supabase
         .from("organizations_public")
-        .select("id, name, slug, logo_url, embed_theme, holiday_region")
+        .select("id, name, slug, logo_url, embed_theme, holiday_region, owner_default_staff_id")
         .eq("slug", slug)
         .maybeSingle();
       if (error) throw error;
@@ -295,28 +287,6 @@ export default function BookingPage() {
   };
   const getCurrencySymbol = (code: string) => CURRENCY_SYMBOLS[code?.toLowerCase()] ?? code?.toUpperCase() ?? "€";
 
-  const { data: staffList = [] } = useQuery({
-    queryKey: ["booking-staff", selectedLocation],
-    queryFn: async () => {
-      const { data: staffLocations, error } = await supabase
-        .from("staff_locations")
-        .select("staff_id")
-        .eq("location_id", selectedLocation);
-      if (error) throw error;
-      const staffIds = staffLocations?.map((sl) => sl.staff_id) || [];
-      if (staffIds.length === 0) return [];
-
-      const { data: staffData, error: staffError } = await supabase
-        .from("staff_public")
-        .select("id, name")
-        .in("id", staffIds)
-        .eq("is_active", true);
-      if (staffError) throw staffError;
-      return staffData || [];
-    },
-    enabled: !!selectedLocation,
-  });
-
   // Calculate total duration from selected services
   const selectedServiceObjects = services.filter((s) =>
     selectedServices.includes(s.id),
@@ -359,8 +329,21 @@ export default function BookingPage() {
     };
   }, [locationAvailDays, offDayReasonMap, holidayDatesSet, holidayWorkingOverrideSet, holidayNameMap]);
 
+  const ownerDefaultStaffId =
+    (org as { owner_default_staff_id?: string | null } | null)?.owner_default_staff_id ?? null;
+
   const { data: timeSlots = [] } = useQuery({
-    queryKey: ["booking-slots", selectedLocation, selectedStaff, selectedDate, selectedServices, holidayOverrides, offDaysList, adminRegion],
+    queryKey: [
+      "booking-slots",
+      org?.id,
+      ownerDefaultStaffId,
+      selectedLocation,
+      selectedDate,
+      selectedServices,
+      holidayOverrides,
+      offDaysList,
+      adminRegion,
+    ],
     queryFn: async () => {
       const dateStr = selectedDate;
       if (offDaysSet.has(dateStr)) return [];
@@ -451,27 +434,22 @@ export default function BookingPage() {
       const occupancyRows: OccupancyRow[] = (slotRows ?? []) as OccupancyRow[];
 
       let gcalEvents: { start: string; end: string }[] = [];
-      if (selectedStaff) {
-        try {
-          const { data: gcalData } = await supabase.functions.invoke(
-            "fetch-gcal-events",
-            {
-              body: {
-                organization_id: org!.id,
-                time_min: dayStart,
-                time_max: dayEnd,
-              },
-            },
-          );
-          if (gcalData?.events) {
-            gcalEvents = gcalData.events.map((e: { start: string; end: string }) => ({
-              start: e.start,
-              end: e.end,
-            }));
-          }
-        } catch {
-          // Silently ignore gcal fetch errors for public booking
+      try {
+        const { data: gcalData } = await supabase.functions.invoke("fetch-gcal-events", {
+          body: {
+            organization_id: org!.id,
+            time_min: dayStart,
+            time_max: dayEnd,
+          },
+        });
+        if (gcalData?.events) {
+          gcalEvents = gcalData.events.map((e: { start: string; end: string }) => ({
+            start: e.start,
+            end: e.end,
+          }));
         }
+      } catch {
+        // Silently ignore gcal fetch errors for public booking
       }
 
       const duration = totalDuration || 30;
@@ -500,18 +478,20 @@ export default function BookingPage() {
           const isPast = !isAfter(current, new Date());
           const slotWallStart = current;
           const slotWallEnd = slotEnd;
-          const eligibleForSlot = eligibleStaffIdsForWallSlot(
+          const breakFilteredReal = eligibleStaffIdsForWallSlot(
             activeStaffAtLocation,
             staffOnlyBreaks,
             dateStr,
             slotWallStart,
             slotWallEnd,
           );
-          const hasEligibleStaffForSlot = selectedStaff
-            ? eligibleForSlot.includes(selectedStaff)
-            : activeStaffAtLocation.size === 0
-              ? true
-              : eligibleForSlot.length > 0;
+          const eligibleForSlot =
+            activeStaffAtLocation.size > 0
+              ? breakFilteredReal
+              : ownerDefaultStaffId
+                ? [ownerDefaultStaffId]
+                : [];
+          const hasEligibleStaffForSlot = eligibleForSlot.length > 0;
 
           const intervalStartMs = current.getTime();
           const intervalEndMs = slotEnd.getTime();
@@ -522,8 +502,8 @@ export default function BookingPage() {
               intervalStartMs,
               intervalEndMs,
               eligibleStaffIds: eligibleForSlot,
-              locationHasNoStaff: activeStaffAtLocation.size === 0,
-              requestedStaffId: selectedStaff || null,
+              locationHasNoStaff: activeStaffAtLocation.size === 0 && !ownerDefaultStaffId,
+              requestedStaffId: null,
             });
           const gcalConflict = gcalEvents.some((e) => {
             const es = new Date(e.start).getTime();
@@ -603,7 +583,6 @@ export default function BookingPage() {
           body: {
             organization_id: org!.id,
             location_id: selectedLocation,
-            ...(selectedStaff ? { staff_id: selectedStaff } : {}),
             service_ids: selectedServices,
             customer_name: fullName,
             customer_email: (customerEmail || ((form.get("email") as string)?.trim() ?? "")).trim() || "",
@@ -1073,6 +1052,9 @@ export default function BookingPage() {
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
+                <p className="text-sm text-muted-foreground max-w-md">
+                  We tonen gecombineerde tijden. Een beschikbare medewerker wordt automatisch toegewezen.
+                </p>
                 <div className="flex flex-col sm:flex-row gap-4">
                   {/* Left column: Calendar */}
                   <div className="shrink-0">
