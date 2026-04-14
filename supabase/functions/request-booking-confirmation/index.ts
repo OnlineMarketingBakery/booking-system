@@ -1,7 +1,7 @@
 import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import { createClient } from "npm:@supabase/supabase-js@2.57.2";
 import Holidays from "npm:date-holidays@3.26.9";
-import { isSlotAvailableForBooking } from "../_shared/slotStartCapacity.ts";
+import { isWallIntervalAvailableForBooking } from "../_shared/slotStartCapacity.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -293,19 +293,21 @@ serve(async (req) => {
     }
 
     const padMs = 36 * 60 * 60 * 1000;
-    const { data: slotRows, error: slotErr } = await supabase.rpc("get_location_slot_start_bookings", {
+    const holdEndMs = holdEnd.getTime();
+    const { data: slotRows, error: slotErr } = await supabase.rpc("get_location_booking_occupancy", {
       p_location_id: location_id,
       p_range_start: new Date(startDate.getTime() - padMs).toISOString(),
-      p_range_end: new Date(startDate.getTime() + padMs).toISOString(),
+      p_range_end: new Date(holdEndMs + padMs).toISOString(),
       p_exclude_pending_token: null,
     });
     if (slotErr) {
-      console.error("[request-booking-confirmation] get_location_slot_start_bookings:", slotErr);
+      console.error("[request-booking-confirmation] get_location_booking_occupancy:", slotErr);
     } else if (
-      !isSlotAvailableForBooking({
-        rows: (slotRows ?? []) as { start_time: string; staff_id: string | null }[],
-        slotStartMs: startDate.getTime(),
-        eligibleStaffCount: eligibleStaffIdsForCapacity.length,
+      !isWallIntervalAvailableForBooking({
+        rows: (slotRows ?? []) as { start_time: string; end_time: string; staff_id: string | null }[],
+        intervalStartMs: startDate.getTime(),
+        intervalEndMs: holdEndMs,
+        eligibleStaffIds: eligibleStaffIdsForCapacity,
         locationHasNoStaff: capSids.length === 0,
         requestedStaffId: staffIdHold,
       })

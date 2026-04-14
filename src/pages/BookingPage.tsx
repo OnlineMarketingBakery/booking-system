@@ -52,10 +52,12 @@ import { Day } from "react-day-picker";
 import { DEFAULT_EMBED_THEME, hexToHsl, hexToHslWithAlpha, hexToRgba, getContrastingTextColors } from "@/types/embedTheme";
 import type { EmbedTheme } from "@/types/embedTheme";
 import { getHolidayDatesForYears, getHolidaysWithNames } from "@/lib/holidays";
-import { isSlotAvailableForBooking, type SlotStartRow } from "@/lib/slotStartCapacity";
-
-/** Minutes of buffer required between consecutive bookings; next slot can only start after this after the previous end. */
-const BOOKING_SLOT_BUFFER_MINUTES = 15;
+import {
+  isWallIntervalAvailableForBooking,
+  wallIntervalsOverlap,
+  type OccupancyRow,
+} from "@/lib/slotStartCapacity";
+import { BOOKING_SLOT_GRID_MINUTES } from "@/lib/bookingSlotConstants";
 
 function eligibleStaffIdsForWallSlot(
   activeStaffAtLocation: Set<string>,
@@ -435,7 +437,7 @@ export default function BookingPage() {
       const dayEnd = new Date(selectedDate + "T23:59:59").toISOString();
 
       const { data: slotRows, error: slotErr } = await supabase.rpc(
-        "get_location_slot_start_bookings",
+        "get_location_booking_occupancy",
         {
           p_location_id: selectedLocation,
           p_range_start: dayStart,
@@ -444,9 +446,9 @@ export default function BookingPage() {
         },
       );
       if (slotErr) {
-        console.error("[booking-slots] get_location_slot_start_bookings:", slotErr);
+        console.error("[booking-slots] get_location_booking_occupancy:", slotErr);
       }
-      const slotStartRows: SlotStartRow[] = (slotRows ?? []) as SlotStartRow[];
+      const occupancyRows: OccupancyRow[] = (slotRows ?? []) as OccupancyRow[];
 
       let gcalEvents: { start: string; end: string }[] = [];
       if (selectedStaff) {
@@ -487,12 +489,14 @@ export default function BookingPage() {
           em,
         );
 
-        while (
-          isBefore(addMinutes(current, duration), end) ||
-          format(addMinutes(current, duration), "HH:mm") ===
-            format(end, "HH:mm")
-        ) {
+        while (isBefore(current, end)) {
           const slotEnd = addMinutes(current, duration);
+          const fitsInWindow =
+            isBefore(slotEnd, end) || format(slotEnd, "HH:mm") === format(end, "HH:mm");
+          if (!fitsInWindow) {
+            current = addMinutes(current, BOOKING_SLOT_GRID_MINUTES);
+            continue;
+          }
           const isPast = !isAfter(current, new Date());
           const slotWallStart = current;
           const slotWallEnd = slotEnd;
@@ -509,20 +513,22 @@ export default function BookingPage() {
               ? true
               : eligibleForSlot.length > 0;
 
+          const intervalStartMs = current.getTime();
+          const intervalEndMs = slotEnd.getTime();
           const bookingConflict =
             !hasEligibleStaffForSlot ||
-            !isSlotAvailableForBooking({
-              rows: slotStartRows,
-              slotStartMs: current.getTime(),
-              eligibleStaffCount: eligibleForSlot.length,
+            !isWallIntervalAvailableForBooking({
+              rows: occupancyRows,
+              intervalStartMs,
+              intervalEndMs,
+              eligibleStaffIds: eligibleForSlot,
               locationHasNoStaff: activeStaffAtLocation.size === 0,
               requestedStaffId: selectedStaff || null,
             });
           const gcalConflict = gcalEvents.some((e) => {
-            const es = new Date(e.start);
-            const ee = new Date(e.end);
-            const eeWithBuffer = addMinutes(ee, BOOKING_SLOT_BUFFER_MINUTES);
-            return isBefore(current, eeWithBuffer) && isAfter(slotEnd, es);
+            const es = new Date(e.start).getTime();
+            const ee = new Date(e.end).getTime();
+            return wallIntervalsOverlap(intervalStartMs, intervalEndMs, es, ee);
           });
           const wallOverlapBreak = (bStart: string, bEnd: string) => {
             const bs = new Date(`${dateStr}T${bStart.slice(0, 5)}:00`);
@@ -547,7 +553,7 @@ export default function BookingPage() {
               available: !bookingConflict && !gcalConflict && staffBreakAllowsSlot,
             });
           }
-          current = addMinutes(current, duration + BOOKING_SLOT_BUFFER_MINUTES);
+          current = addMinutes(current, BOOKING_SLOT_GRID_MINUTES);
         }
       }
       return slots;

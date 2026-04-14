@@ -2,7 +2,7 @@ import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import Stripe from "https://esm.sh/stripe@18.5.0";
 import { createClient } from "npm:@supabase/supabase-js@2.57.2";
 import Holidays from "npm:date-holidays@3.26.9";
-import { isSlotAvailableForBooking } from "../_shared/slotStartCapacity.ts";
+import { isWallIntervalAvailableForBooking } from "../_shared/slotStartCapacity.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -85,8 +85,6 @@ function validateInput(body: Record<string, unknown>) {
 
 const SLOT_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const SLOT_TIME_RE = /^([01]?\d|2[0-3]):[0-5]\d$/;
-
-const BOOKING_BUFFER_MIN = 15;
 
 /** Date + time exactly as shown on the booking UI (for customer-facing emails). */
 function parseCustomerSlot(body: Record<string, unknown>): { date: string; time: string } | null {
@@ -349,21 +347,23 @@ serve(async (req) => {
     }
 
     const padMs = 36 * 60 * 60 * 1000;
-    const { data: slotRows, error: slotErr } = await supabaseClient.rpc("get_location_slot_start_bookings", {
+    const bookingSpanEndMs = startDate.getTime() + totalDurationMin * 60000;
+    const { data: slotRows, error: slotErr } = await supabaseClient.rpc("get_location_booking_occupancy", {
       p_location_id: location_id,
       p_range_start: new Date(startDate.getTime() - padMs).toISOString(),
-      p_range_end: new Date(startDate.getTime() + padMs).toISOString(),
+      p_range_end: new Date(bookingSpanEndMs + padMs).toISOString(),
       p_exclude_pending_token: excludePendingToken,
     });
     if (slotErr) {
-      console.error("[create-booking-checkout] get_location_slot_start_bookings:", slotErr);
+      console.error("[create-booking-checkout] get_location_booking_occupancy:", slotErr);
     } else if (
-      !isSlotAvailableForBooking({
-        rows: (slotRows ?? []) as { start_time: string; staff_id: string | null }[],
-        slotStartMs: startDate.getTime(),
-        eligibleStaffCount: eligibleStaffIdsForCapacity.length,
+      !isWallIntervalAvailableForBooking({
+        rows: (slotRows ?? []) as { start_time: string; end_time: string; staff_id: string | null }[],
+        intervalStartMs: startDate.getTime(),
+        intervalEndMs: bookingSpanEndMs,
+        eligibleStaffIds: eligibleStaffIdsForCapacity,
         locationHasNoStaff: capSids.length === 0,
-        requestedStaffId: staff_id,
+        requestedStaffId: staff_id ?? null,
       })
     ) {
       return new Response(

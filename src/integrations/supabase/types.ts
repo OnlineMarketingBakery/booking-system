@@ -1113,6 +1113,15 @@ export type Database = {
         }
         Returns: { start_time: string; staff_id: string | null }[]
       }
+      get_location_booking_occupancy: {
+        Args: {
+          p_location_id: string
+          p_range_end: string
+          p_range_start: string
+          p_exclude_pending_token?: string | null
+        }
+        Returns: { start_time: string; end_time: string; staff_id: string | null }[]
+      }
     }
     Enums: {
       app_role: "super_admin" | "salon_owner" | "staff" | "customer"
