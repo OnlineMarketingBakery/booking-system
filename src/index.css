@@ -49,8 +49,8 @@
     --destructive: 0 84% 60%;
     --destructive-foreground: 0 0% 100%;
 
-    --border: 220 13% 91%;
-    --input: 220 13% 91%;
+    --border: 220 6% 88%;
+    --input: 220 6% 88%;
     --ring: 262 83% 58%;
 
     --radius: 0.625rem;
@@ -60,14 +60,16 @@
     --warning: 38 92% 50%;
     --warning-foreground: 0 0% 100%;
 
-    --sidebar-background: 262 83% 4%;
-    --sidebar-foreground: 262 10% 85%;
-    --sidebar-primary: 262 83% 58%;
+    --sidebar-background: 220 45% 7%;
+    --sidebar-foreground: 214 18% 82%;
+    --sidebar-primary: 207 90% 54%;
     --sidebar-primary-foreground: 0 0% 100%;
-    --sidebar-accent: 262 30% 12%;
-    --sidebar-accent-foreground: 262 10% 90%;
-    --sidebar-border: 262 20% 15%;
-    --sidebar-ring: 262 83% 58%;
+    --sidebar-accent: 215 28% 16%;
+    --sidebar-accent-foreground: 210 40% 98%;
+    --sidebar-border: 215 22% 20%;
+    --sidebar-ring: 207 90% 54%;
+
+    --dashboard-canvas: 214 42% 97%;
   }
 
   .dark {
@@ -95,8 +97,8 @@
     --destructive: 0 62% 30%;
     --destructive-foreground: 0 0% 95%;
 
-    --border: 220 20% 18%;
-    --input: 220 20% 18%;
+    --border: 220 10% 20%;
+    --input: 220 10% 20%;
     --ring: 262 83% 62%;
 
     --success: 152 69% 35%;
@@ -104,14 +106,16 @@
     --warning: 38 92% 45%;
     --warning-foreground: 0 0% 100%;
 
-    --sidebar-background: 262 83% 4%;
-    --sidebar-foreground: 262 10% 85%;
-    --sidebar-primary: 262 83% 62%;
+    --sidebar-background: 220 45% 6%;
+    --sidebar-foreground: 214 16% 78%;
+    --sidebar-primary: 207 90% 58%;
     --sidebar-primary-foreground: 0 0% 100%;
-    --sidebar-accent: 262 30% 12%;
-    --sidebar-accent-foreground: 262 10% 90%;
-    --sidebar-border: 262 20% 15%;
-    --sidebar-ring: 262 83% 62%;
+    --sidebar-accent: 215 26% 14%;
+    --sidebar-accent-foreground: 210 35% 96%;
+    --sidebar-border: 215 22% 16%;
+    --sidebar-ring: 207 90% 58%;
+
+    --dashboard-canvas: 220 28% 9%;
   }
 }
 
@@ -122,5 +126,19 @@
   body {
     @apply bg-background text-foreground antialiased;
     font-family: "Aeonik", system-ui, -apple-system, sans-serif;
+  }
+}
+
+@layer components {
+  /** Premium dashboard nav surface (gradient over base hue). */
+  .dashboard-sidebar-surface {
+    color: hsl(var(--sidebar-foreground));
+    background-color: hsl(var(--sidebar-background));
+    background-image: linear-gradient(
+      168deg,
+      hsl(215 30% 13%) 0%,
+      hsl(218 36% 9%) 42%,
+      hsl(220 48% 6%) 100%
+    );
   }
 }

@@ -7,22 +7,12 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Settings, Pencil, Loader2, Lock, Users, Trash2, Percent, Calendar } from "lucide-react";
-import { Link } from "react-router-dom";
+import { Settings, Pencil, Loader2, Lock, Users, Trash2, Percent, AlertTriangle } from "lucide-react";
 import { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { useToast } from "@/hooks/use-toast";
 import { useSpamProtection } from "@/hooks/useSpamProtection";
-import { HOLIDAY_REGION_OPTIONS } from "@/lib/holidays";
-
-const ORG_TIMEZONE_OPTIONS: { value: string; label: string }[] = [
-  { value: "Europe/Amsterdam", label: "Amsterdam (CET/CEST)" },
-  { value: "Europe/Brussels", label: "Brussels" },
-  { value: "Europe/London", label: "London" },
-  { value: "Europe/Paris", label: "Paris" },
-  { value: "Europe/Berlin", label: "Berlin" },
-  { value: "UTC", label: "UTC" },
-];
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { reassignBookingsAndOrgDefaultThenDeactivate } from "@/lib/staffReassignment";
 import { SpamProtectionFields } from "@/components/SpamProtectionFields";
 import { useQueryClient } from "@tanstack/react-query";
 import { useMutation } from "@tanstack/react-query";
@@ -41,7 +31,8 @@ import { Checkbox } from "@/components/ui/checkbox";
 
 export default function SettingsPage() {
   const { organization } = useOrganization();
-  const { changePassword, user } = useAuth();
+  const { changePassword, user, signOut, invokeFunction } = useAuth();
+  const navigate = useNavigate();
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [editingName, setEditingName] = useState(false);
@@ -51,7 +42,79 @@ export default function SettingsPage() {
   const [confirmPassword, setConfirmPassword] = useState("");
   const [changingPassword, setChangingPassword] = useState(false);
   const [staffToFire, setStaffToFire] = useState<{ id: string; name: string; phone?: string | null } | null>(null);
+  const [bookingSlugDraft, setBookingSlugDraft] = useState("");
+  const [slugSaving, setSlugSaving] = useState(false);
+  const [resetSalonOpen, setResetSalonOpen] = useState(false);
+  const [deleteAccountOpen, setDeleteAccountOpen] = useState(false);
+  const [dangerPassword, setDangerPassword] = useState("");
+  const [dangerConfirm, setDangerConfirm] = useState("");
   const { validateSpamProtection, SpamProtectionFieldsProps } = useSpamProtection();
+
+  useEffect(() => {
+    if (organization?.slug) setBookingSlugDraft(organization.slug);
+  }, [organization?.slug]);
+
+  function normalizeBookingSlug(raw: string): string {
+    return raw
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .slice(0, 50);
+  }
+
+  const resetSalonMutation = useMutation({
+    mutationFn: async () => {
+      if (!organization) throw new Error("No organization");
+      return invokeFunction("salon-account-danger-zone", {
+        action: "reset_salon_data",
+        organization_id: organization.id,
+        password: dangerPassword,
+        confirm_text: dangerConfirm.trim(),
+      }) as Promise<{ success?: boolean; slug?: string; error?: string }>;
+    },
+    onSuccess: (data) => {
+      setResetSalonOpen(false);
+      setDangerPassword("");
+      setDangerConfirm("");
+      queryClient.invalidateQueries();
+      toast({
+        title: "Salon data reset",
+        description: data?.slug
+          ? `Your booking link changed to use slug “${data.slug}”. Complete the setup prompts to add services and staff again.`
+          : "Your salon was cleared. Use the setup prompts to add services and staff again.",
+      });
+    },
+    onError: (err: unknown) =>
+      toast({
+        title: "Could not reset",
+        description: err instanceof Error ? err.message : "Something went wrong.",
+        variant: "destructive",
+      }),
+  });
+
+  const deleteAccountMutation = useMutation({
+    mutationFn: async () =>
+      invokeFunction("salon-account-danger-zone", {
+        action: "delete_my_account",
+        password: dangerPassword,
+        confirm_text: dangerConfirm.trim(),
+      }) as Promise<{ success?: boolean }>,
+    onSuccess: async () => {
+      setDeleteAccountOpen(false);
+      setDangerPassword("");
+      setDangerConfirm("");
+      toast({ title: "Account deleted", description: "You have been signed out." });
+      await signOut();
+      navigate("/");
+    },
+    onError: (err: unknown) =>
+      toast({
+        title: "Could not delete account",
+        description: err instanceof Error ? err.message : "Something went wrong.",
+        variant: "destructive",
+      }),
+  });
 
   type VatRateRow = {
     id?: string;
@@ -196,33 +259,18 @@ export default function SettingsPage() {
   const fireStaff = useMutation({
     mutationFn: async (staffId: string) => {
       if (!organization) throw new Error("No organization");
-      const ownerPh = organization.owner_default_staff_id ?? null;
-      if (ownerPh) {
-        const { error: bookingsError } = await supabase
-          .from("bookings")
-          .update({ staff_id: ownerPh })
-          .eq("staff_id", staffId)
-          .eq("organization_id", organization.id);
-        if (bookingsError) throw bookingsError;
-      } else {
-        const { error: bookingsError } = await supabase
-          .from("bookings")
-          .update({ staff_id: null })
-          .eq("staff_id", staffId)
-          .eq("organization_id", organization.id);
-        if (bookingsError) throw bookingsError;
-      }
-      const { error } = await supabase.from("staff").update({ is_active: false }).eq("id", staffId).eq("organization_id", organization.id);
-      if (error) throw error;
+      await reassignBookingsAndOrgDefaultThenDeactivate(supabase, organization, staffId);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["staff"] });
       queryClient.invalidateQueries({ queryKey: ["staff-locations"] });
+      queryClient.invalidateQueries({ queryKey: ["organization"] });
       queryClient.invalidateQueries({ queryKey: ["all-bookings"] });
       setStaffToFire(null);
       toast({
         title: "Staff removed",
-        description: "They will no longer appear for new bookings. Their bookings were moved to the salon default assignee when available.",
+        description:
+          "They will no longer appear for new bookings. Their appointments were reassigned to another team member when possible.",
       });
     },
     onError: (err: unknown) =>
@@ -262,10 +310,8 @@ export default function SettingsPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-bold tracking-tight">Settings</h1>
-        <p className="text-muted-foreground">
-          {organization ? "Manage your salon settings" : "Manage your account"}
-        </p>
+        <h2 className="text-xl font-semibold tracking-tight">General</h2>
+        <p className="text-muted-foreground text-sm">Account, organization, staff, and BTW rates.</p>
       </div>
 
       {user?.must_change_password && (
@@ -392,7 +438,79 @@ export default function SettingsPage() {
                   </>
                 )}
               </div>
-              {/* <p><span className="font-medium">Slug:</span> {organization?.slug}</p> */}
+              <div className="space-y-2 border-t pt-3">
+                <Label className="text-sm font-medium">Booking page address</Label>
+                <p className="text-xs text-muted-foreground">
+                  The last part of your public booking link ({typeof window !== "undefined" ? window.location.origin : ""}
+                  /book/<span className="font-mono">…</span>). Use lowercase letters, numbers, and hyphens only. Changing
+                  it will invalidate old links and embed codes that still use the previous address.
+                </p>
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
+                  <div className="min-w-0 flex-1 space-y-1">
+                    <div className="flex flex-wrap items-center gap-x-1 text-xs text-muted-foreground">
+                      <span className="shrink-0">{typeof window !== "undefined" ? window.location.origin : ""}/book/</span>
+                    </div>
+                    <Input
+                      value={bookingSlugDraft}
+                      onChange={(e) => setBookingSlugDraft(normalizeBookingSlug(e.target.value))}
+                      placeholder="my-salon"
+                      maxLength={50}
+                      minLength={2}
+                      className="font-mono text-sm"
+                      autoComplete="off"
+                      spellCheck={false}
+                    />
+                  </div>
+                  <Button
+                    type="button"
+                    size="sm"
+                    disabled={
+                      slugSaving ||
+                      !organization ||
+                      normalizeBookingSlug(bookingSlugDraft).length < 2 ||
+                      normalizeBookingSlug(bookingSlugDraft) === organization.slug
+                    }
+                    onClick={async () => {
+                      if (!organization) return;
+                      const next = normalizeBookingSlug(bookingSlugDraft);
+                      if (next.length < 2) {
+                        toast({
+                          title: "Invalid address",
+                          description: "Use at least 2 characters (letters, numbers, or hyphens).",
+                          variant: "destructive",
+                        });
+                        return;
+                      }
+                      setSlugSaving(true);
+                      const { error } = await supabase.from("organizations").update({ slug: next }).eq("id", organization.id);
+                      setSlugSaving(false);
+                      if (error) {
+                        const dup =
+                          error.code === "23505" ||
+                          String(error.message).toLowerCase().includes("duplicate") ||
+                          String(error.message).toLowerCase().includes("unique");
+                        toast({
+                          title: dup ? "That address is already taken" : "Could not update",
+                          description: dup
+                            ? "Pick a different slug. Another salon may already use this one."
+                            : error.message,
+                          variant: "destructive",
+                        });
+                        return;
+                      }
+                      queryClient.invalidateQueries({ queryKey: ["organization"] });
+                      queryClient.invalidateQueries({ queryKey: ["booking-org"] });
+                      toast({
+                        title: "Booking link updated",
+                        description: `Your booking page is now /book/${next}`,
+                      });
+                    }}
+                  >
+                    {slugSaving && <Loader2 className="mr-1 h-3 w-3 animate-spin" />}
+                    Save slug
+                  </Button>
+                </div>
+              </div>
               {/* <p><span className="font-medium">Stripe:</span> {organization?.stripe_account_id || "Not connected"}</p> */}
               {/* <div className="space-y-2 pt-2">
                 <Label className="font-medium">Default holiday region</Label>
@@ -424,96 +542,6 @@ export default function SettingsPage() {
                   </SelectContent>
                 </Select>
               </div> */}
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Calendar className="h-5 w-5 text-primary" />
-                Time zone & Google Calendar
-              </CardTitle>
-              <CardDescription>
-                Used for confirmation emails and Google Calendar events. Bookings update Google Calendar only (editing
-                Google does not change appointments in Salonora).
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4 max-w-xl text-sm">
-              <div className="space-y-2">
-                <Label>Salon time zone</Label>
-                <Select
-                  value={(organization as { timezone?: string }).timezone ?? "Europe/Amsterdam"}
-                  onValueChange={async (v) => {
-                    if (!organization) return;
-                    const { error } = await supabase.from("organizations").update({ timezone: v }).eq("id", organization.id);
-                    if (error) toast({ title: "Error", description: error.message, variant: "destructive" });
-                    else {
-                      queryClient.invalidateQueries({ queryKey: ["organization"] });
-                      toast({ title: "Time zone updated" });
-                    }
-                  }}
-                >
-                  <SelectTrigger className="bg-background">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {ORG_TIMEZONE_OPTIONS.map((o) => (
-                      <SelectItem key={o.value} value={o.value}>
-                        {o.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="flex items-start gap-3 rounded-md border p-3">
-                <Checkbox
-                  id="gcal-layers"
-                  checked={!!(organization as { gcal_use_staff_secondary_calendars?: boolean }).gcal_use_staff_secondary_calendars}
-                  onCheckedChange={async (c) => {
-                    if (!organization) return;
-                    const { error } = await supabase
-                      .from("organizations")
-                      .update({ gcal_use_staff_secondary_calendars: !!c })
-                      .eq("id", organization.id);
-                    if (error) toast({ title: "Error", description: error.message, variant: "destructive" });
-                    else {
-                      queryClient.invalidateQueries({ queryKey: ["organization"] });
-                      toast({ title: "Calendar preference saved" });
-                    }
-                  }}
-                />
-                <div>
-                  <Label htmlFor="gcal-layers" className="cursor-pointer font-medium">
-                    Separate Google calendar per staff member
-                  </Label>
-                  <p className="text-muted-foreground text-xs mt-1">
-                    When enabled, each staff member can have a dedicated Google calendar (Salonora — name) under your
-                    connected account for clearer scheduling. Create those calendars with the button below after
-                    enabling. All bookings still use the connected Google account.
-                  </p>
-                </div>
-              </div>
-              <Button
-                type="button"
-                variant="secondary"
-                disabled={!(organization as { gcal_use_staff_secondary_calendars?: boolean }).gcal_use_staff_secondary_calendars}
-                onClick={async () => {
-                  if (!organization) return;
-                  const { data, error } = await supabase.functions.invoke("ensure-staff-gcal-calendars", {
-                    body: { organization_id: organization.id },
-                  });
-                  if (error) toast({ title: "Error", description: error.message, variant: "destructive" });
-                  else {
-                    queryClient.invalidateQueries({ queryKey: ["staff"] });
-                    toast({
-                      title: "Calendars",
-                      description: `Created ${(data as { created?: number })?.created ?? 0} calendar(s).`,
-                    });
-                  }
-                }}
-              >
-                Create staff calendars in Google
-              </Button>
             </CardContent>
           </Card>
 
@@ -650,12 +678,33 @@ export default function SettingsPage() {
             </CardContent>
           </Card>
 
+          <Card className="border-destructive/40">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2 text-base text-destructive">
+                <AlertTriangle className="h-5 w-5" />
+                Danger zone
+              </CardTitle>
+              <CardDescription>
+                Reset removes all salon data but keeps your email and password. Delete account removes your login and
+                owned salon data permanently.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="flex flex-wrap gap-3">
+              <Button type="button" variant="outline" className="border-destructive/50 text-destructive" onClick={() => { setDangerPassword(""); setDangerConfirm(""); setResetSalonOpen(true); }}>
+                Reset salon data
+              </Button>
+              <Button type="button" variant="destructive" onClick={() => { setDangerPassword(""); setDangerConfirm(""); setDeleteAccountOpen(true); }}>
+                Delete my account
+              </Button>
+            </CardContent>
+          </Card>
+
           {/* <Card className="border-dashed">
             <CardHeader>
               <CardTitle className="text-base">Booking reminders &amp; Google Calendar</CardTitle>
               <CardDescription>
                 Manage appointment emails and calendar sync under{" "}
-                <Link to="/dashboard/bookings/settings" className="font-medium text-primary underline-offset-4 hover:underline">
+                <Link to="/dashboard/settings/booking-settings" className="font-medium text-primary underline-offset-4 hover:underline">
                   Bookings → Booking settings
                 </Link>
                 .
@@ -665,6 +714,112 @@ export default function SettingsPage() {
         </>
       )}
 
+      <AlertDialog
+        open={resetSalonOpen}
+        onOpenChange={(open) => {
+          setResetSalonOpen(open);
+          if (!open) {
+            setDangerPassword("");
+            setDangerConfirm("");
+          }
+        }}
+      >
+        <AlertDialogContent className="max-w-md">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Reset all salon data?</AlertDialogTitle>
+            <AlertDialogDescription className="space-y-3 text-left">
+              <span className="block">
+                This removes bookings, customers, services, staff, locations, VAT rates, and related settings for this
+                salon. Your sign-in email and password stay the same. You will see the onboarding setup again.
+              </span>
+              <span className="block font-medium text-foreground">Enter your password and type CONFIRM to continue.</span>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <div className="space-y-3 py-2">
+            <div className="space-y-2">
+              <Label htmlFor="danger-pw-reset">Password</Label>
+              <Input
+                id="danger-pw-reset"
+                type="password"
+                autoComplete="current-password"
+                value={dangerPassword}
+                onChange={(e) => setDangerPassword(e.target.value)}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="danger-confirm-reset">Type CONFIRM</Label>
+              <Input id="danger-confirm-reset" value={dangerConfirm} onChange={(e) => setDangerConfirm(e.target.value)} autoComplete="off" />
+            </div>
+          </div>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              disabled={resetSalonMutation.isPending || dangerConfirm.trim() !== "CONFIRM" || !dangerPassword}
+              onClick={(e) => {
+                e.preventDefault();
+                resetSalonMutation.mutate();
+              }}
+            >
+              {resetSalonMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : "Reset salon"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog
+        open={deleteAccountOpen}
+        onOpenChange={(open) => {
+          setDeleteAccountOpen(open);
+          if (!open) {
+            setDangerPassword("");
+            setDangerConfirm("");
+          }
+        }}
+      >
+        <AlertDialogContent className="max-w-md">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete your account?</AlertDialogTitle>
+            <AlertDialogDescription className="space-y-3 text-left">
+              <span className="block">
+                This permanently deletes your Salonora account and any salons you own, including all bookings and
+                settings. This cannot be undone.
+              </span>
+              <span className="block font-medium text-foreground">Enter your password and type CONFIRM to continue.</span>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <div className="space-y-3 py-2">
+            <div className="space-y-2">
+              <Label htmlFor="danger-pw-del">Password</Label>
+              <Input
+                id="danger-pw-del"
+                type="password"
+                autoComplete="current-password"
+                value={dangerPassword}
+                onChange={(e) => setDangerPassword(e.target.value)}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="danger-confirm-del">Type CONFIRM</Label>
+              <Input id="danger-confirm-del" value={dangerConfirm} onChange={(e) => setDangerConfirm(e.target.value)} autoComplete="off" />
+            </div>
+          </div>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              disabled={deleteAccountMutation.isPending || dangerConfirm.trim() !== "CONFIRM" || !dangerPassword}
+              onClick={(e) => {
+                e.preventDefault();
+                deleteAccountMutation.mutate();
+              }}
+            >
+              {deleteAccountMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : "Delete account"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
       <AlertDialog open={!!staffToFire} onOpenChange={(open) => !open && setStaffToFire(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
@@ -673,7 +828,7 @@ export default function SettingsPage() {
               {staffToFire && (
                 <>
                   Remove <strong>{staffToFire.name}</strong>
-                  {staffToFire.phone && <> ({staffToFire.phone})</>} from your staff? They will no longer appear for new bookings. Existing bookings will still show their name.
+                  {staffToFire.phone && <> ({staffToFire.phone})</>} from your staff? They will no longer appear for new bookings. Their open appointments are reassigned to another active team member when one is available.
                 </>
               )}
             </AlertDialogDescription>

@@ -119,7 +119,7 @@ Deno.serve(async (req) => {
     const appUrl = Deno.env.get("APP_URL") || "http://localhost:8080";
     return new Response(null, {
       status: 302,
-      headers: { Location: `${appUrl}/dashboard/bookings/settings?gcal=connected` },
+      headers: { Location: `${appUrl}/dashboard/settings/booking-settings?gcal=connected` },
     });
   } catch (err) {
     console.error("Callback error:", err);

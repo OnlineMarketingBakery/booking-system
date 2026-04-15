@@ -129,11 +129,19 @@ export function PostSetupWizard() {
       if (locId && row?.id) {
         await supabase.from("staff_locations").insert({ staff_id: row.id, location_id: locId });
       }
+      const defId = (organization as { owner_default_staff_id?: string | null }).owner_default_staff_id;
+      if (defId && row?.id) {
+        const { data: cur } = await supabase.from("staff").select("is_owner_placeholder").eq("id", defId).maybeSingle();
+        if (cur?.is_owner_placeholder) {
+          await supabase.from("organizations").update({ owner_default_staff_id: row.id }).eq("id", organization.id);
+        }
+      }
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["post-setup-check"] });
       queryClient.invalidateQueries({ queryKey: ["staff"] });
       queryClient.invalidateQueries({ queryKey: ["staff-locations"] });
+      queryClient.invalidateQueries({ queryKey: ["organization"] });
       queryClient.invalidateQueries({ queryKey: ["dashboard-overview"] });
       toast({ title: "You're ready to go", description: "Service and team member are set up." });
     },

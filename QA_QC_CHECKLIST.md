@@ -61,6 +61,7 @@ Use the real booking link for a test salon (your team will provide it). Complete
 - [ ] **Step 3 — Time:** You can pick a **date** and a **time** that makes sense. Times that should not be offered (for example when the salon is closed, on a holiday, or during a break you configured) do **not** appear as available—or the calendar clearly blocks those days.
 - [ ] **Several staff at one location:** If the salon has **more than one** staff member, the **same time** can still be offered to new customers **until** each staff member already has someone booked for that time (for example with two staff, two different customers can book the same slot when nobody chose a specific staff member—or after one person chose staff A, another person can still book that time for staff B).
 - [ ] **Step 4 — Details:** **Phone number** and **full name** are required; the form explains what is missing if you try to continue without them.
+- [ ] **Book now (submit):** After filling the form normally (not as a bot), you can submit **right away** and do **not** get stuck with a generic “please wait and try again” message unless something is actually wrong.
 - [ ] Optional **email** field behaves as expected for your flows (some paths need email for confirmation or payment).
 - [ ] **Save my information** (if shown): Turning it on/off does not break the form; after a successful booking, returning customers may see fewer steps—confirm with your team what should happen.
 
@@ -88,7 +89,7 @@ One or more of these can apply depending on price and settings—your team will 
 
 ## 5. Dashboard — salon owner (main menu)
 
-The owner menu typically includes: Dashboard, Bookings (and Booking settings), Locations, Staff, Services, Calendar, Holidays, Embed, Customers, Settings. Confirm each item **opens the right page** and the page title matches the menu.
+The owner menu typically includes: Dashboard, **Bookings** (list only), Locations, Staff, Services, Calendar, Customers, and **Settings** (sidebar: General, Integrations, **Booking settings**, Holidays, booking widget). Confirm each item **opens the right page** and the page title matches the menu.
 
 ### Dashboard (overview)
 
@@ -105,8 +106,9 @@ The owner menu typically includes: Dashboard, Bookings (and Booking settings), L
 - [ ] You can **assign or change staff** on a booking where allowed.
 - [ ] **Reschedule** (if available): Choosing a new future date and time updates the booking; choosing a past time shows an error.
 
-### Bookings → Booking settings
+### Settings → Booking settings
 
+- [ ] From **Settings → Booking settings** (not under the Bookings menu), you reach breaks, reminders, and Google Calendar connection for bookings.
 - [ ] **Break times:** You can add, edit, or remove break rules; saved rules still appear after refreshing the page. Public booking should **respect** these breaks (spot-check with a test time).
 - [ ] **Reminder emails:** Switches for **day before** and **one hour before** save correctly and stay as set after reload.
 - [ ] **Google Calendar:** **Connect** sends you through Google and returns with a success message; **Disconnect** works; **Sync existing bookings** runs and reports something sensible (or “nothing to sync” if appropriate).
@@ -130,19 +132,21 @@ The owner menu typically includes: Dashboard, Bookings (and Booking settings), L
 ### Calendar
 
 - [ ] The calendar shows bookings in the right **time slots** and **days**.
+- [ ] Appointment cards are easy to tell apart by **status** (for example pending vs confirmed vs cancelled); similar services may have a **slightly** different tint but status should still be obvious at a glance.
 - [ ] On the week view, each appointment block’s **height and position** match its real start and end time (for example a 9:45–10:15 booking reaches into the next hour row instead of staying squeezed in the 9:00 row only).
 - [ ] If **two or more bookings overlap in time** on the same day, they appear as **separate columns** next to each other (not one unreadable stack), and you can **open each** by clicking its own card.
 - [ ] Moving or editing from the calendar (if supported) updates the booking list and vice versa.
 
 ### Holidays and closed days
 
+- [ ] From **Settings → Holidays**, you can open the same holiday and closed-day tools that used to live only in the main menu (if your team moved the menu).
 - [ ] **Public holidays** for the chosen **country/region** appear logically on the calendar or booking flow.
 - [ ] You can mark **extra closed days** or **exceptions**; customers cannot book when the business should be closed.
 - [ ] **Date ranges** and **partial-day closures** (if you use them) behave as the salon expects.
 
 ### Embed (widget)
 
-- [ ] The page shows the **correct embed code** and **booking URL** for this salon.
+- [ ] From **Settings → Booking widget** (or the same page your team labels for embed), the screen shows the **correct embed code** and **booking URL** for this salon.
 - [ ] **Copy** puts the code on the clipboard.
 - [ ] **Saving design** (colors, headings, optional custom styling) updates the **live preview** and the real public page after save.
 - [ ] **Reset to defaults** restores the original look.
@@ -155,12 +159,18 @@ The owner menu typically includes: Dashboard, Bookings (and Booking settings), L
 
 ### Settings (organization and account)
 
-- [ ] **Account — change password** (see section 2).
-- [ ] **Organization name** can be edited and saves; **slug** (URL part) displays correctly and matches the live booking link.
-- [ ] **Payment connection** line (for example whether the salon is connected to take online payments) matches the real setup your team configured.
-- [ ] **Default holiday region** saves and affects holiday behavior.
-- [ ] **Remove staff** from here (if available): Confirm dialog appears; after removal, that person no longer appears for **new** bookings; existing appointments still show history as your team expects.
-- [ ] **Tax / VAT rates:** Add, edit, remove, set **default**, and **disable percentage** where applicable; **Save** persists; services can use these rates.
+- [ ] **Settings** opens a layout with a **left-hand list** (General, Integrations, Booking settings, Holidays, booking widget); choosing each item shows the right content without broken navigation.
+- [ ] **General:** **Account — change password** (see section 2).
+- [ ] **General:** **Organization name** can be edited and saves.
+- [ ] **General — Booking page address (slug):** You can change the `/book/…` slug in settings, see a clear error if the slug is already taken, and the new public booking link works; you understand that old links with the previous slug no longer work.
+- [ ] **General:** **Payment connection** line (for example whether the salon is connected to take online payments) matches the real setup your team configured.
+- [ ] **General:** **Default holiday region** saves and affects holiday behavior (if your product still uses it here).
+- [ ] **General — Remove staff** (if available): Confirm dialog appears; after removal, that person no longer appears for **new** bookings; their **existing** appointments are reassigned to another active team member when possible (including when they were the “default” assignee).
+- [ ] **General — Danger zone:** **Reset salon data** asks for your password and the word CONFIRM, then clears the salon and shows setup again while keeping the same login. **Delete my account** asks for the same checks, then signs you out and removes your account and owned salon data permanently.
+- [ ] **General — Tax / VAT rates:** Add, edit, remove, set **default**, and **disable percentage** where applicable; **Save** persists; services can use these rates.
+- [ ] **Integrations — Google Calendar:** You can choose **one calendar for everyone** vs **a separate calendar per staff member**; when per-staff is on, each staff row can be set to **disabled**, **create a new “Salonora — name” calendar**, or an **existing** calendar you are allowed to write to; read-only calendars are explained if the app lists them.
+- [ ] **Integrations — Time zone** saves and still matches confirmation emails and calendar behavior as your team expects.
+- [ ] Old bookmark paths for **Holidays**, **Embed**, or **Bookings → Booking settings** still land you in the right place (or redirect into Settings) without a dead page.
 
 ---
 
@@ -239,4 +249,4 @@ Your team defines which emails must fire. Typical cases:
 
 *Internal note for the development team: Whenever you ship a change that customers or salon users will see, add or adjust items in this checklist in the same plain language so QA always has an up-to-date guide.*
 
-**Last reviewed against the app:** March 2026.
+**Last reviewed against the app:** April 2026.

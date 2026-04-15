@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, type CSSProperties } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useOrganization } from "@/hooks/useOrganization";
@@ -58,6 +58,19 @@ const CAL_START_HOUR = HOURS[0];
 const CAL_END_HOUR = HOURS[HOURS.length - 1] + 1;
 /** Pixel height of one hour row (must match Tailwind h-[80px] on hour cells). */
 const HOUR_ROW_PX = 80;
+/** Sub-hour grid: 15-minute row height (hour band / 4). */
+const CAL_QUARTER_PX = HOUR_ROW_PX / 4;
+
+/** Hairline every 15 minutes (full column height; hour borders stay stronger). */
+const QUARTER_GRID_STYLE: CSSProperties = {
+  backgroundImage: `repeating-linear-gradient(
+    to bottom,
+    transparent 0px,
+    transparent ${CAL_QUARTER_PX - 1}px,
+    rgba(71, 85, 105, 0.09) ${CAL_QUARTER_PX - 1}px,
+    rgba(71, 85, 105, 0.09) ${CAL_QUARTER_PX}px
+  )`,
+};
 
 function dayColumnTimeRange(day: Date) {
   const start = setMinutes(setHours(startOfDay(day), CAL_START_HOUR), 0);
@@ -179,6 +192,69 @@ const BOOKING_STATUS_COLORS: Record<string, string> = {
   cancelled: "bg-destructive/20 text-destructive border-destructive/30",
   no_show: "bg-muted text-muted-foreground border-border",
 };
+
+/** Strong left edge = status (dominant); fill = same family with a small hue shift by service. */
+const BOOKING_STATUS_LEFT: Record<string, string> = {
+  pending: "border-l-amber-500",
+  confirmed: "border-l-blue-600",
+  paid: "border-l-emerald-600",
+  completed: "border-l-teal-600",
+  cancelled: "border-l-destructive",
+  no_show: "border-l-muted-foreground",
+};
+
+const BOOKING_STATUS_BG: Record<string, { h: number; s: number; l: number }> = {
+  pending: { h: 38, s: 90, l: 90 },
+  confirmed: { h: 218, s: 76, l: 90 },
+  paid: { h: 152, s: 52, l: 89 },
+  completed: { h: 168, s: 46, l: 88 },
+  cancelled: { h: 0, s: 72, l: 92 },
+  no_show: { h: 220, s: 16, l: 90 },
+};
+
+/** Stable signed offset in [-spread, spread] from a string (for hue differentiation). */
+function hashToSignedSpread(input: string | null | undefined, spread: number): number {
+  if (!input || !String(input).trim()) return 0;
+  const s = String(input).trim();
+  let n = 2166136261;
+  for (let i = 0; i < s.length; i++) {
+    n ^= s.charCodeAt(i);
+    n = Math.imul(n, 16777619);
+  }
+  const span = spread * 2 + 1;
+  return (Math.abs(n) % span) - spread;
+}
+
+function wrapHue(h: number): number {
+  const x = h % 360;
+  return x < 0 ? x + 360 : x;
+}
+
+/** Staff shifts hue strongly; service adds a smaller second offset so same stylist / different service still differs. */
+function bookingWeekBlockStyles(
+  status: string | undefined,
+  serviceId: string | null | undefined,
+  staffId: string | null | undefined,
+) {
+  const st = status && BOOKING_STATUS_LEFT[status] ? status : "confirmed";
+  const left = BOOKING_STATUS_LEFT[st] ?? BOOKING_STATUS_LEFT.confirmed;
+  const base = BOOKING_STATUS_BG[st] ?? BOOKING_STATUS_BG.confirmed;
+  const staffHue = hashToSignedSpread(staffId, 36);
+  const serviceHue = hashToSignedSpread(serviceId, 14);
+  const h = wrapHue(base.h + staffHue + serviceHue);
+  const bg = `hsl(${h} ${base.s}% ${base.l}% / 0.94)`;
+  const fg = `hsl(${h} ${Math.min(base.s + 24, 50)}% 22%)`;
+  const edge = `hsl(${h} ${Math.min(base.s + 8, 36)}% 72% / 0.55)`;
+  return {
+    className: `rounded-none border-t border-r border-b-0 border-l-[4px] shadow-sm ${left}`,
+    style: {
+      backgroundColor: bg,
+      color: fg,
+      borderTopColor: edge,
+      borderRightColor: edge,
+    } as CSSProperties,
+  };
+}
 
 const BOOKING_STATUS_OPTIONS = [
   { value: "completed", label: "Completed" },
@@ -351,28 +427,41 @@ function CalendarWeekGrid({
   onSelectOrphanGcal,
 }: CalendarWeekGridProps) {
   return (
-    <div className="overflow-hidden w-full">
-      <div className="min-w-0">
-        <div className="grid grid-cols-[60px_repeat(7,minmax(0,1fr))] border-b">
-          <div className="p-2 shrink-0" />
-          {weekDays.map((day) => (
-            <div
-              key={day.toISOString()}
-              className={`p-2 text-center border-l min-w-0 ${isSameDay(day, new Date()) ? "bg-primary/5" : ""}`}
-            >
-              <p className="text-xs text-muted-foreground">{format(day, "EEE")}</p>
-              <p className={`text-lg font-semibold ${isSameDay(day, new Date()) ? "text-primary" : ""}`}>
-                {format(day, "d")}
-              </p>
-            </div>
-          ))}
+    <div className="w-full min-w-0 overflow-x-auto">
+      <div className="min-w-[640px]">
+        <div className="grid grid-cols-[48px_repeat(7,minmax(0,1fr))] border-b-2 border-border bg-muted/50">
+          <div className="shrink-0 border-r border-border bg-muted/70" aria-hidden />
+          {weekDays.map((day) => {
+            const isToday = isSameDay(day, new Date());
+            return (
+              <div
+                key={day.toISOString()}
+                className={`min-w-0 border-l border-border py-2 text-center shadow-[inset_0_-1px_0_0_rgba(15,23,42,0.08)] ${
+                  isToday ? "bg-primary/[0.14]" : "bg-muted/20"
+                }`}
+              >
+                <p
+                  className={`text-[11px] font-medium leading-tight sm:text-xs ${
+                    isToday ? "font-semibold text-primary" : "text-muted-foreground"
+                  }`}
+                >
+                  {format(day, "EEE")}{" "}
+                  <span className={isToday ? "text-primary" : "text-foreground"}>{format(day, "d")}</span>
+                </p>
+              </div>
+            );
+          })}
         </div>
-        <div className="grid grid-cols-[60px_repeat(7,minmax(0,1fr))]">
-          <div className="flex flex-col shrink-0 border-b">
+        <div className="grid grid-cols-[48px_repeat(7,minmax(0,1fr))] border-b border-border bg-background">
+          <div
+            className="relative flex shrink-0 flex-col border-r-2 border-border bg-muted/40"
+            style={{ height: HOURS.length * HOUR_ROW_PX }}
+          >
+            <div className="pointer-events-none absolute inset-0 z-[1]" style={QUARTER_GRID_STYLE} aria-hidden />
             {HOURS.map((hour) => (
               <div
                 key={hour}
-                className="box-border border-b text-xs text-muted-foreground text-right pr-2 pt-1 shrink-0"
+                className="relative z-[2] box-border shrink-0 border-b border-border/90 pr-1.5 pt-1 text-right text-[10px] font-medium tabular-nums text-muted-foreground sm:text-[11px]"
                 style={{ height: HOUR_ROW_PX }}
               >
                 {format(setHours(new Date(), hour), "h a")}
@@ -404,13 +493,17 @@ function CalendarWeekGrid({
             return (
               <div
                 key={day.toISOString()}
-                className="relative border-l min-w-0 border-b"
+                className={`relative min-w-0 border-l border-border bg-background ${
+                  isSameDay(day, new Date()) ? "bg-primary/[0.06]" : ""
+                }`}
                 style={{ height: HOURS.length * HOUR_ROW_PX }}
               >
+                <div className="pointer-events-none absolute inset-0 z-[1]" style={QUARTER_GRID_STYLE} aria-hidden />
                 {HOURS.map((hour) => {
                   const slotTime = setMinutes(setHours(startOfDay(day), hour), 0);
                   const isPastSlot = isBefore(slotTime, new Date());
                   const top = (hour - CAL_START_HOUR) * HOUR_ROW_PX;
+                  const isTodayCol = isSameDay(day, new Date());
                   return (
                     <div
                       key={hour}
@@ -421,17 +514,17 @@ function CalendarWeekGrid({
                         isPastSlot ? undefined : (e) => e.key === "Enter" && onAddBooking(day, hour)
                       }
                       style={{ top, height: HOUR_ROW_PX }}
-                      className={`absolute left-0 right-0 box-border border-b p-1 ${
+                      className={`absolute left-0 right-0 z-[2] box-border border-b border-border/90 p-1 ${
                         isPastSlot
-                          ? "cursor-not-allowed bg-muted/30 opacity-75"
-                          : "cursor-pointer transition-colors hover:bg-primary/10 focus:outline-none focus:ring-1 focus:ring-ring focus:ring-inset"
-                      } ${isSameDay(day, new Date()) && !isPastSlot ? "bg-primary/5" : ""} ${
-                        isSameDay(day, new Date()) && isPastSlot ? "bg-muted/20" : ""
+                          ? "cursor-not-allowed bg-muted/30 opacity-70"
+                          : "cursor-pointer transition-colors hover:bg-muted/50 focus:outline-none focus:ring-1 focus:ring-ring focus:ring-inset"
+                      } ${isTodayCol && !isPastSlot ? "bg-primary/[0.07]" : ""} ${
+                        isTodayCol && isPastSlot ? "bg-muted/25" : ""
                       }`}
                     />
                   );
                 })}
-                <div className="pointer-events-none absolute inset-0 z-[1] overflow-visible">
+                <div className="pointer-events-none absolute inset-0 z-[3] overflow-visible">
                   {slots.map((s) => {
                     const endDate = new Date(s.end || s.start);
                     const layout = layoutEventBlock(new Date(s.start), endDate, day);
@@ -440,7 +533,7 @@ function CalendarWeekGrid({
                       lane: 0,
                       laneCount: 1,
                     };
-                    const gapPx = 2;
+                    const gapPx = 4;
                     const pct = 100 / laneCount;
                     const leftCalc = `calc(${lane * pct}% + ${gapPx / 2}px)`;
                     const widthCalc = `calc(${pct}% - ${gapPx}px)`;
@@ -454,20 +547,39 @@ function CalendarWeekGrid({
                     const tooltipContent = booking
                       ? `${booking.customer_name}${(booking.services as { name?: string })?.name ? ` · ${(booking.services as { name?: string }).name}` : ""}${(booking.staff as { name?: string })?.name ? ` · ${(booking.staff as { name?: string }).name}` : ""}\n${format(new Date(booking.start_time), "MMM d, h:mm a")} – ${format(new Date(booking.end_time), "h:mm a")}${booking.notes ? `\n${booking.notes}` : ""}`
                       : `${s.summary}\n${format(new Date(s.start), "MMM d, h:mm a")}${s.end ? ` – ${format(new Date(s.end), "h:mm a")}` : ""}`;
-                    const statusTone =
+                    const weekBlock =
                       isManageable && booking
-                        ? BOOKING_STATUS_COLORS[booking.status] ?? BOOKING_STATUS_COLORS.confirmed
-                        : "";
+                        ? bookingWeekBlockStyles(
+                            booking.status,
+                            booking.service_id as string | null | undefined,
+                            booking.staff_id as string | null | undefined,
+                          )
+                        : { className: "", style: undefined as CSSProperties | undefined };
 
-                    const cardInner = (
-                      <>
-                        <p className="min-h-0 truncate font-medium leading-tight">{s.summary}</p>
-                        <p className="truncate text-[10px] leading-tight text-muted-foreground sm:text-xs">
-                          {format(new Date(s.start), "h:mm a")}
-                          {s.end ? ` — ${format(new Date(s.end), "h:mm a")}` : ""}
-                        </p>
-                      </>
-                    );
+                    const svcName = (booking?.services as { name?: string } | null)?.name;
+                    const stfName = (booking?.staff as { name?: string } | null)?.name;
+                    const cardInner =
+                      isManageable && booking ? (
+                        <>
+                          <p className="min-h-0 truncate text-[11px] font-semibold leading-snug sm:text-xs">
+                            {booking.customer_name?.trim() || s.summary}
+                          </p>
+                          <p className="min-h-0 truncate text-[10px] leading-snug text-foreground/70">
+                            {format(new Date(s.start), "h:mm a")}
+                            {s.end ? `–${format(new Date(s.end), "h:mm a")}` : ""}
+                            {svcName ? ` · ${svcName}` : ""}
+                            {stfName ? ` · ${stfName}` : ""}
+                          </p>
+                        </>
+                      ) : (
+                        <>
+                          <p className="min-h-0 truncate text-[11px] font-medium leading-snug sm:text-xs">{s.summary}</p>
+                          <p className="truncate text-[10px] leading-snug text-muted-foreground sm:text-[11px]">
+                            {format(new Date(s.start), "h:mm a")}
+                            {s.end ? ` · ${format(new Date(s.end), "h:mm a")}` : ""}
+                          </p>
+                        </>
+                      );
 
                     const cardStyle = {
                       top: layout.top,
@@ -482,7 +594,7 @@ function CalendarWeekGrid({
                           key={getSlotKey(s)}
                           title={`${s.summary} (${format(new Date(s.start), "MMM d, h:mm a")}) — Google only, not a salon booking`}
                           style={cardStyle}
-                          className="pointer-events-none absolute box-border flex min-h-0 flex-col justify-start overflow-hidden rounded-md border border-dashed border-muted-foreground/40 bg-muted/40 p-1 text-xs text-muted-foreground shadow-sm"
+                          className="pointer-events-none absolute box-border flex min-h-0 flex-col justify-start gap-0.5 overflow-hidden rounded-none border-t border-r border-b-0 border-l border-dashed border-muted-foreground/40 bg-muted/40 p-1.5 text-xs text-muted-foreground"
                         >
                           {cardInner}
                         </div>
@@ -495,13 +607,13 @@ function CalendarWeekGrid({
                           <div
                             role={isClickable ? "button" : undefined}
                             tabIndex={isClickable ? 0 : undefined}
-                            style={cardStyle}
-                            className={`pointer-events-auto absolute box-border flex min-h-0 flex-col justify-start overflow-hidden rounded-md border p-1 text-xs shadow-sm ${
+                            style={{ ...cardStyle, ...(weekBlock.style ?? {}) }}
+                            className={`pointer-events-auto absolute box-border flex min-h-0 flex-col justify-start gap-0.5 overflow-hidden rounded-none p-1.5 text-xs shadow-sm transition-opacity duration-150 ${
                               isManageable
-                                ? `${statusTone} cursor-pointer transition-opacity hover:opacity-90 focus:outline-none focus:ring-1 focus:ring-ring`
+                                ? `${weekBlock.className} cursor-pointer hover:opacity-90 focus:outline-none focus:ring-2 focus:ring-ring`
                                 : orphanIsSalonScoped
-                                  ? "cursor-pointer border-border bg-muted transition-colors hover:bg-muted/80 focus:outline-none focus:ring-1 focus:ring-ring"
-                                  : "border-border bg-muted"
+                                  ? "cursor-pointer rounded-none border-t border-r border-b-0 border-l border-border bg-muted transition-colors hover:bg-muted/85 focus:outline-none focus:ring-2 focus:ring-ring"
+                                  : "rounded-none border-t border-r border-b-0 border-l border-border bg-muted"
                             }`}
                             onClick={(e) => {
                               e.stopPropagation();
@@ -531,7 +643,10 @@ function CalendarWeekGrid({
                             {cardInner}
                           </div>
                         </TooltipTrigger>
-                        <TooltipContent side="top" className="max-w-[280px] whitespace-pre-line text-xs">
+                        <TooltipContent
+                          side="top"
+                          className="max-w-[min(22rem,calc(100vw-2rem))] whitespace-pre-line text-xs leading-relaxed shadow-md"
+                        >
                           {tooltipContent}
                         </TooltipContent>
                       </Tooltip>
@@ -575,7 +690,7 @@ export default function CalendarPage() {
     queryFn: async () => {
       const { data, error } = await supabase
         .from("bookings")
-        .select("*, services(name, duration_minutes), staff(name), locations(name), gcal_event_id")
+        .select("*, service_id, services(name, duration_minutes), staff(name), locations(name), gcal_event_id")
         .eq("organization_id", organization!.id)
         .gte("start_time", rangeStart)
         .lt("start_time", rangeEnd)
@@ -700,102 +815,143 @@ export default function CalendarPage() {
   };
 
   return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between flex-wrap gap-2">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight flex items-center gap-2">
-            <CalendarIcon className="h-6 w-6 text-primary" />
-            Calendar
-          </h1>
-          <p className="text-muted-foreground">Week of {format(weekStart, "MMM d, yyyy")}</p>
-        </div>
-        <div className="flex items-center gap-2">
-          <Button onClick={() => openAddBooking()} className="gap-2">
-            <Plus className="h-4 w-4" />
-            Add booking
-          </Button>
-          {gcalConnected ? (
-            <Badge variant="outline" className="text-xs bg-primary/10 text-primary border-primary/30">
-              Google connected
-            </Badge>
-          ) : (
-            <Button variant="outline" size="sm" onClick={handleConnectGoogle} className="gap-2">
-              <ExternalLink className="h-4 w-4" />
-              Connect Google Calendar
-            </Button>
+    <>
+      <div className="space-y-3">
+        <header className="pb-0 sm:pb-1">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
+            <div className="flex min-w-0 items-start gap-2.5 sm:items-center">
+              <span className="mt-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-primary/20 bg-primary/10 text-primary sm:mt-0 sm:h-9 sm:w-9">
+                <CalendarIcon className="h-4 w-4 sm:h-[18px] sm:w-[18px]" aria-hidden />
+              </span>
+              <div className="min-w-0 space-y-0.5">
+                <p className="text-[11px] font-semibold uppercase leading-none tracking-wider text-muted-foreground">Schedule</p>
+                <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0">
+                  <h1 className="text-lg font-semibold tracking-tight text-foreground sm:text-xl">Calendar</h1>
+                  <p className="text-sm text-muted-foreground">Week of {format(weekStart, "MMM d, yyyy")}</p>
+                </div>
+              </div>
+            </div>
+            <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto sm:justify-end">
+              <Button onClick={() => openAddBooking()} className="gap-2">
+                <Plus className="h-4 w-4" />
+                Create appointment
+              </Button>
+              {!gcalConnected && (
+                <Button variant="outline" size="sm" onClick={handleConnectGoogle} className="gap-2">
+                  <ExternalLink className="h-4 w-4" />
+                  Connect Google Calendar
+                </Button>
+              )}
+              <div
+                className="inline-flex items-center overflow-hidden rounded-md border border-border/80 bg-muted/35 dark:bg-muted/25"
+                role="group"
+                aria-label="Week navigation"
+              >
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-8 w-8 shrink-0 rounded-none border-r border-border/60 text-muted-foreground hover:bg-muted/80 hover:text-foreground"
+                  onClick={() => setCurrentWeek((w) => subWeeks(w, 1))}
+                >
+                  <ChevronLeft className="h-4 w-4" />
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-8 min-w-[4rem] rounded-none border-r border-border/60 px-2.5 text-xs font-medium text-foreground hover:bg-muted/80"
+                  onClick={() => setCurrentWeek(new Date())}
+                >
+                  Today
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-8 w-8 shrink-0 rounded-none text-muted-foreground hover:bg-muted/80 hover:text-foreground"
+                  onClick={() => setCurrentWeek((w) => addWeeks(w, 1))}
+                >
+                  <ChevronRight className="h-4 w-4" />
+                </Button>
+              </div>
+            </div>
+          </div>
+        </header>
+
+        {locations.length > 0 && (
+          <div className="pb-1">
+            <Tabs className="w-full max-w-full sm:w-fit" value={effectiveLocationId || ""} onValueChange={setSelectedLocationId}>
+              <TabsList className="flex h-auto min-h-0 flex-wrap gap-1 border-0 bg-transparent p-0 shadow-none">
+                {locations.map((loc) => (
+                  <TabsTrigger
+                    key={loc.id}
+                    value={loc.id}
+                    className="gap-1.5 rounded-md px-3 text-sm data-[state=active]:bg-primary/10 data-[state=active]:font-medium data-[state=active]:text-primary data-[state=active]:shadow-none"
+                  >
+                    <MapPin className="h-3.5 w-3.5 opacity-70" />
+                    {loc.name}
+                  </TabsTrigger>
+                ))}
+              </TabsList>
+            </Tabs>
+          </div>
+        )}
+
+        {locations.length === 0 && (
+          <p className="text-sm text-muted-foreground">Add locations in Locations to see the calendar by location.</p>
+        )}
+
+        <div className="pt-0.5 sm:pt-1">
+          {locations.length > 0 && (
+            <>
+              {isLoading ? (
+                <div className="flex justify-center py-12">
+                  <Loader2 className="h-6 w-6 animate-spin text-primary" />
+                </div>
+              ) : (
+                <div className="overflow-hidden rounded-lg border border-border bg-background shadow-sm">
+                  <CalendarWeekGrid
+                    key={effectiveLocationId}
+                    weekDays={weekDays}
+                    orgBookings={orgBookings}
+                    gcalEvents={gcalEvents}
+                    gcalConnected={!!gcalConnected}
+                    locationId={effectiveLocationId || ""}
+                    firstLocationId={firstLocationId}
+                    organizationId={organization?.id ?? ""}
+                    onAddBooking={(day, hour) => openAddBooking(day, hour)}
+                    onSelectBooking={setSelectedBooking}
+                    onSelectOrphanGcal={setSelectedOrphanGcalEvent}
+                  />
+                </div>
+              )}
+            </>
           )}
-          <Button variant="outline" size="icon" onClick={() => setCurrentWeek((w) => subWeeks(w, 1))}>
-            <ChevronLeft className="h-4 w-4" />
-          </Button>
-          <Button variant="outline" size="sm" onClick={() => setCurrentWeek(new Date())}>
-            Today
-          </Button>
-          <Button variant="outline" size="icon" onClick={() => setCurrentWeek((w) => addWeeks(w, 1))}>
-            <ChevronRight className="h-4 w-4" />
-          </Button>
+
+          {locations.length === 0 && (
+            <>
+              {isLoading ? (
+                <div className="flex justify-center py-12">
+                  <Loader2 className="h-6 w-6 animate-spin text-primary" />
+                </div>
+              ) : (
+                <div className="overflow-hidden rounded-lg border border-border bg-background shadow-sm">
+                  <CalendarWeekGrid
+                    weekDays={weekDays}
+                    orgBookings={orgBookings}
+                    gcalEvents={gcalEvents}
+                    gcalConnected={!!gcalConnected}
+                    locationId=""
+                    firstLocationId={firstLocationId}
+                    organizationId={organization?.id ?? ""}
+                    onAddBooking={(day, hour) => openAddBooking(day, hour)}
+                    onSelectBooking={setSelectedBooking}
+                    onSelectOrphanGcal={setSelectedOrphanGcalEvent}
+                  />
+                </div>
+              )}
+            </>
+          )}
         </div>
       </div>
-
-      {locations.length > 0 && (
-        <Tabs className="w-fit" value={effectiveLocationId || ""} onValueChange={setSelectedLocationId}>
-          <TabsList className="flex flex-wrap h-auto gap-1">
-            {locations.map((loc) => (
-              <TabsTrigger key={loc.id} value={loc.id} className="gap-1.5">
-                <MapPin className="h-3.5 w-3.5" />
-                {loc.name}
-              </TabsTrigger>
-            ))}
-          </TabsList>
-        </Tabs>
-      )}
-
-      {locations.length > 0 && (
-        <>
-          {isLoading ? (
-            <div className="flex justify-center py-8">
-              <Loader2 className="h-6 w-6 animate-spin text-primary" />
-            </div>
-          ) : (
-            <CalendarWeekGrid
-              key={effectiveLocationId}
-              weekDays={weekDays}
-              orgBookings={orgBookings}
-              gcalEvents={gcalEvents}
-              gcalConnected={!!gcalConnected}
-              locationId={effectiveLocationId || ""}
-              firstLocationId={firstLocationId}
-              organizationId={organization?.id ?? ""}
-              onAddBooking={(day, hour) => openAddBooking(day, hour)}
-              onSelectBooking={setSelectedBooking}
-              onSelectOrphanGcal={setSelectedOrphanGcalEvent}
-            />
-          )}
-        </>
-      )}
-
-      {locations.length === 0 && (
-        <>
-          <p className="text-sm text-muted-foreground">Add locations in Locations to see the calendar by location.</p>
-          {isLoading ? (
-            <div className="flex justify-center py-8">
-              <Loader2 className="h-6 w-6 animate-spin text-primary" />
-            </div>
-          ) : (
-            <CalendarWeekGrid
-              weekDays={weekDays}
-              orgBookings={orgBookings}
-              gcalEvents={gcalEvents}
-              gcalConnected={!!gcalConnected}
-              locationId=""
-              firstLocationId={firstLocationId}
-              organizationId={organization?.id ?? ""}
-              onAddBooking={(day, hour) => openAddBooking(day, hour)}
-              onSelectBooking={setSelectedBooking}
-              onSelectOrphanGcal={setSelectedOrphanGcalEvent}
-            />
-          )}
-        </>
-      )}
 
       <OrphanGcalEventDialog
         event={selectedOrphanGcalEvent}
@@ -853,7 +1009,7 @@ export default function CalendarPage() {
           closeAddBooking();
         }}
       />
-    </div>
+    </>
   );
 }
 
@@ -1095,7 +1251,7 @@ function AddBookingDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-md max-h-[90vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>Add booking</DialogTitle>
+          <DialogTitle>Create appointment</DialogTitle>
         </DialogHeader>
         <div className="grid gap-4 py-2">
           <div className="grid gap-2">
@@ -1428,7 +1584,7 @@ function OrphanGcalEventDialog({
       const { data, error } = await supabase
         .from("bookings")
         .insert(row)
-        .select("*, services(name, duration_minutes), staff(name), locations(name), gcal_event_id")
+        .select("*, service_id, services(name, duration_minutes), staff(name), locations(name), gcal_event_id")
         .single();
       if (error) throw error;
       const { error: fnErr } = await supabase.functions.invoke("sync-booking-to-gcal", {

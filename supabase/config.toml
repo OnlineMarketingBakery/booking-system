@@ -42,6 +42,12 @@ verify_jwt = true
 [functions.fetch-gcal-events]
 verify_jwt = false
 
+[functions.list-google-calendars]
+verify_jwt = false
+
+[functions.salon-account-danger-zone]
+verify_jwt = false
+
 [functions.cancel-pending-booking-hold]
 verify_jwt = false
 

@@ -102,7 +102,8 @@ export default function BookingPage() {
   const { slug } = useParams<{ slug: string }>();
   const [searchParams] = useSearchParams();
   const { toast } = useToast();
-  const { validateSpamProtection, SpamProtectionFieldsProps } = useSpamProtection();
+  /** Public widget: honeypot only — avoid a minimum delay that blocks fast legitimate checkouts. */
+  const { validateSpamProtection, SpamProtectionFieldsProps } = useSpamProtection({ minSeconds: 0 });
   const [step, setStep] = useState<Step>("location");
   const [selectedLocation, setSelectedLocation] = useState<string>("");
   const [selectedServices, setSelectedServices] = useState<string[]>([]);
@@ -505,11 +506,15 @@ export default function BookingPage() {
               locationHasNoStaff: activeStaffAtLocation.size === 0 && !ownerDefaultStaffId,
               requestedStaffId: null,
             });
-          const gcalConflict = gcalEvents.some((e) => {
-            const es = new Date(e.start).getTime();
-            const ee = new Date(e.end).getTime();
-            return wallIntervalsOverlap(intervalStartMs, intervalEndMs, es, ee);
-          });
+          // Owner primary calendar reflects one person's busy time — do not hide pooled slots for other stylists.
+          const useGlobalGcalBlock = activeStaffAtLocation.size <= 1;
+          const gcalConflict =
+            useGlobalGcalBlock &&
+            gcalEvents.some((e) => {
+              const es = new Date(e.start).getTime();
+              const ee = new Date(e.end).getTime();
+              return wallIntervalsOverlap(intervalStartMs, intervalEndMs, es, ee);
+            });
           const wallOverlapBreak = (bStart: string, bEnd: string) => {
             const bs = new Date(`${dateStr}T${bStart.slice(0, 5)}:00`);
             const be = new Date(`${dateStr}T${bEnd.slice(0, 5)}:00`);

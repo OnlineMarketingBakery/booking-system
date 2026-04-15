@@ -24,6 +24,7 @@ import { useSpamProtection } from "@/hooks/useSpamProtection";
 import { SpamProtectionFields } from "@/components/SpamProtectionFields";
 import { Plus, Users, Loader2, KeyRound, MapPin, Pencil, UserX, RotateCcw } from "lucide-react";
 import { StaffLocationAssignment } from "@/components/StaffLocationAssignment";
+import { reassignBookingsAndOrgDefaultThenDeactivate } from "@/lib/staffReassignment";
 
 export default function Staff() {
   const { organization } = useOrganization();
@@ -104,11 +105,26 @@ export default function Staff() {
         if (locError) throw locError;
       }
 
+      if (organization?.owner_default_staff_id && newStaff?.id) {
+        const { data: cur } = await supabase
+          .from("staff")
+          .select("is_owner_placeholder")
+          .eq("id", organization.owner_default_staff_id)
+          .maybeSingle();
+        if (cur?.is_owner_placeholder) {
+          await supabase
+            .from("organizations")
+            .update({ owner_default_staff_id: newStaff.id })
+            .eq("id", organization.id);
+        }
+      }
+
       return newStaff;
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["staff"] });
       queryClient.invalidateQueries({ queryKey: ["staff-locations"] });
+      queryClient.invalidateQueries({ queryKey: ["organization"] });
       setOpen(false);
       setSelectedLocationId("");
       toast({ title: "Staff member added" });
@@ -148,28 +164,13 @@ export default function Staff() {
 
   const deactivateStaff = useMutation({
     mutationFn: async (id: string) => {
-      const ownerPh = organization?.owner_default_staff_id ?? null;
-      if (ownerPh) {
-        const { error: bookingsError } = await supabase
-          .from("bookings")
-          .update({ staff_id: ownerPh })
-          .eq("staff_id", id)
-          .eq("organization_id", organization!.id);
-        if (bookingsError) throw bookingsError;
-      } else {
-        const { error: bookingsError } = await supabase
-          .from("bookings")
-          .update({ staff_id: null })
-          .eq("staff_id", id)
-          .eq("organization_id", organization!.id);
-        if (bookingsError) throw bookingsError;
-      }
-      const { error } = await supabase.from("staff").update({ is_active: false }).eq("id", id);
-      if (error) throw error;
+      if (!organization) throw new Error("No organization");
+      await reassignBookingsAndOrgDefaultThenDeactivate(supabase, organization, id);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["staff"] });
       queryClient.invalidateQueries({ queryKey: ["staff-locations"] });
+      queryClient.invalidateQueries({ queryKey: ["organization"] });
       queryClient.invalidateQueries({ queryKey: ["all-bookings"] });
       setStaffToDeactivate(null);
       toast({

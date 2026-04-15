@@ -721,34 +721,50 @@ export default function HolidaysPage() {
               <Loader2 className="h-4 w-4 animate-spin" /> Loading…
             </div>
           ) : (
-            <ul className="space-y-2 max-h-[400px] overflow-y-auto">
-              {holidaysWithNames.map(({ date, name }) => {
-                const isWorking = overrideMap.get(date) ?? false;
-                return (
-                  <li
-                    key={date}
-                    className="flex items-center justify-between rounded-lg border px-3 py-2 text-sm"
-                  >
-                    <div>
-                      <span className="font-medium">{format(new Date(date + "T12:00:00"), "EEE, MMM d, yyyy")}</span>
-                      {name && <span className="text-muted-foreground ml-2">— {name}</span>}
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <span className="text-xs text-muted-foreground">
-                        {isWorking ? "Working" : "Off"}
-                      </span>
-                      <Switch
-                        checked={isWorking}
-                        onCheckedChange={(checked) =>
-                          setOverride.mutate({ date, is_working_day: checked })
-                        }
-                        disabled={setOverride.isPending}
-                      />
-                    </div>
-                  </li>
-                );
-              })}
-            </ul>
+            <div className="max-h-[min(28rem,55vh)] overflow-y-auto overflow-x-hidden rounded-lg border border-border bg-muted/15">
+              <ul className="divide-y divide-border">
+                {holidaysWithNames.map(({ date, name }) => {
+                  const isWorking = overrideMap.get(date) ?? false;
+                  const labelId = `holiday-working-${date}`;
+                  const displayName = name?.trim() || "Public holiday";
+                  const dateObj = new Date(date + "T12:00:00");
+                  return (
+                    <li
+                      key={date}
+                      className="flex flex-col gap-3 bg-background px-4 py-3.5 sm:flex-row sm:items-center sm:justify-between sm:gap-6 sm:py-3"
+                    >
+                      <div className="min-w-0 flex-1 space-y-1">
+                        <p className="text-[15px] font-semibold leading-snug text-foreground">{displayName}</p>
+                        <p className="text-sm text-muted-foreground">{format(dateObj, "EEEE, MMMM d, yyyy")}</p>
+                      </div>
+                      <div className="flex shrink-0 items-center justify-between gap-3 border-t border-border/60 pt-3 sm:border-0 sm:pt-0">
+                        <div className="min-w-0 sm:text-right">
+                          <Label htmlFor={labelId} className="text-sm font-medium text-foreground cursor-pointer">
+                            {isWorking ? "Working day" : "Closed"}
+                          </Label>
+                          <p className="text-xs text-muted-foreground mt-0.5 sm:ml-auto sm:max-w-[11rem]">
+                            {isWorking ? "Bookings allowed like a normal day." : "No customer bookings this day."}
+                          </p>
+                        </div>
+                        <Switch
+                          id={labelId}
+                          checked={isWorking}
+                          onCheckedChange={(checked) =>
+                            setOverride.mutate({ date, is_working_day: checked })
+                          }
+                          disabled={setOverride.isPending}
+                          aria-label={
+                            isWorking
+                              ? `${displayName}: working day, bookings allowed. Turn off to close.`
+                              : `${displayName}: closed, no bookings. Turn on to allow bookings.`
+                          }
+                        />
+                      </div>
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
           )}
           {holidaysWithNames.length === 0 && !loading && (
             <p className="text-sm text-muted-foreground py-2">

@@ -46,7 +46,7 @@ export function isWallIntervalAvailableForBooking(opts: {
   return eligibleStaffIds.some((sid) => !overlapping.some((r) => r.staff_id === sid || r.staff_id === null));
 }
 
-/** First eligible stylist (sorted by id) who is free for the interval; else owner placeholder when no real staff. */
+/** Among stylists free for the interval, pick the one with fewest occupancy rows (tie: lexicographic id). */
 export function pickAutoStaffIdForInterval(opts: {
   rows: OccupancyRow[];
   intervalStartMs: number;
@@ -59,8 +59,9 @@ export function pickAutoStaffIdForInterval(opts: {
   if (realStaffIds.length === 0) {
     return ownerDefaultStaffId ?? null;
   }
-  const sorted = [...new Set(eligibleStaffIds)].sort();
-  for (const sid of sorted) {
+  const uniqueEligible = [...new Set(eligibleStaffIds)];
+  const free: string[] = [];
+  for (const sid of uniqueEligible) {
     if (
       isWallIntervalAvailableForBooking({
         rows,
@@ -71,8 +72,15 @@ export function pickAutoStaffIdForInterval(opts: {
         requestedStaffId: sid,
       })
     ) {
-      return sid;
+      free.push(sid);
     }
   }
-  return null;
+  if (free.length === 0) return null;
+  if (free.length === 1) return free[0];
+  const load = (sid: string) => rows.filter((r) => r.staff_id === sid).length;
+  free.sort((a, b) => {
+    const d = load(a) - load(b);
+    return d !== 0 ? d : a.localeCompare(b);
+  });
+  return free[0];
 }

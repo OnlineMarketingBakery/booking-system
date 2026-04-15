@@ -48,7 +48,7 @@ Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
 
   try {
-    const { organization_id, staff_id } = await req.json();
+    const { organization_id } = await req.json();
     if (!organization_id || typeof organization_id !== "string") {
       return new Response(JSON.stringify({ error: "organization_id is required" }), {
         status: 400,
@@ -65,7 +65,7 @@ Deno.serve(async (req) => {
 
     const { data: org, error: orgErr } = await supabase
       .from("organizations")
-      .select("owner_id, gcal_use_staff_secondary_calendars")
+      .select("owner_id")
       .eq("id", organization_id)
       .single();
     if (orgErr || !org?.owner_id) {
@@ -75,13 +75,6 @@ Deno.serve(async (req) => {
       });
     }
 
-    if (!org.gcal_use_staff_secondary_calendars) {
-      return new Response(
-        JSON.stringify({ skipped: true, message: "Enable per-staff calendars in Settings first." }),
-        { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } },
-      );
-    }
-
     const accessToken = await getValidAccessToken(
       supabase,
       org.owner_id as string,
@@ -89,60 +82,57 @@ Deno.serve(async (req) => {
       GOOGLE_CLIENT_SECRET,
     );
     if (!accessToken) {
-      return new Response(JSON.stringify({ error: "Connect Google Calendar (owner account) first." }), {
-        status: 400,
+      return new Response(JSON.stringify({ connected: false, calendars: [] }), {
+        status: 200,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
 
-    const { data: staffList, error: stErr } = await supabase
-      .from("staff")
-      .select("id, name, gcal_secondary_calendar_id, is_owner_placeholder")
-      .eq("organization_id", organization_id)
-      .eq("is_active", true);
-    if (stErr) throw stErr;
+    const items: Array<{
+      id: string;
+      summary: string;
+      accessRole: string;
+      primary?: boolean;
+      writable: boolean;
+    }> = [];
 
-    let list = staffList ?? [];
-    if (staff_id && typeof staff_id === "string") {
-      list = list.filter((s: { id: string }) => String((s as { id: string }).id) === String(staff_id));
-    }
+    let pageToken: string | undefined;
+    do {
+      const url = new URL("https://www.googleapis.com/calendar/v3/users/me/calendarList");
+      url.searchParams.set("maxResults", "250");
+      if (pageToken) url.searchParams.set("pageToken", pageToken);
 
-    let created = 0;
-    let skipped = 0;
-    for (const s of list) {
-      if ((s as { is_owner_placeholder?: boolean }).is_owner_placeholder) {
-        skipped++;
-        continue;
-      }
-      if ((s as { gcal_secondary_calendar_id?: string | null }).gcal_secondary_calendar_id) {
-        skipped++;
-        continue;
-      }
-      const name = String((s as { name?: string }).name || "Staff").trim();
-      const summary = `Salonora — ${name}`;
-      const res = await fetch("https://www.googleapis.com/calendar/v3/calendars", {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ summary }),
+      const res = await fetch(url.toString(), {
+        headers: { Authorization: `Bearer ${accessToken}` },
       });
       const json = await res.json();
       if (!res.ok) {
-        console.error("create calendar failed", json);
-        continue;
+        console.error("calendarList failed", json);
+        return new Response(JSON.stringify({ error: "Could not load Google calendars" }), {
+          status: 502,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
       }
-      const calId = json.id as string | undefined;
-      if (!calId) continue;
-      const { error: upErr } = await supabase
-        .from("staff")
-        .update({ gcal_secondary_calendar_id: calId })
-        .eq("id", (s as { id: string }).id);
-      if (!upErr) created++;
-    }
+      for (const it of json.items || []) {
+        const role = String(it.accessRole || "");
+        const writable = role === "owner" || role === "writer";
+        items.push({
+          id: String(it.id),
+          summary: String(it.summary || it.id),
+          accessRole: role,
+          primary: !!it.primary,
+          writable,
+        });
+      }
+      pageToken = json.nextPageToken;
+    } while (pageToken);
 
-    return new Response(JSON.stringify({ success: true, created, skipped }), {
+    items.sort((a, b) => {
+      if (a.primary !== b.primary) return a.primary ? -1 : 1;
+      return a.summary.localeCompare(b.summary, undefined, { sensitivity: "base" });
+    });
+
+    return new Response(JSON.stringify({ connected: true, calendars: items }), {
       status: 200,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });

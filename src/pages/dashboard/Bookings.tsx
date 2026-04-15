@@ -82,6 +82,9 @@ export default function Bookings() {
 
   const assignableStylists = staffList.filter((s) => !(s as { is_owner_placeholder?: boolean }).is_owner_placeholder);
   const salonDefaultRow = staffList.find((s) => (s as { is_owner_placeholder?: boolean }).is_owner_placeholder);
+  /** Only show the synthetic "(bookings)" row when the org default assignee is still the placeholder. */
+  const showPlaceholderDefaultOption =
+    !!ownerDefaultStaffId && salonDefaultRow?.id === ownerDefaultStaffId;
 
   const assignStaffMutation = useMutation({
     mutationFn: async ({ id, staff_id }: { id: string; staff_id: string | null }) => {
@@ -249,11 +252,11 @@ export default function Bookings() {
                           <SelectValue />
                         </SelectTrigger>
                         <SelectContent>
-                          {ownerDefaultStaffId && (
+                          {showPlaceholderDefaultOption && ownerDefaultStaffId ? (
                             <SelectItem value={ownerDefaultStaffId}>
                               {salonDefaultRow?.name ?? "Salon (default)"}
                             </SelectItem>
-                          )}
+                          ) : null}
                           {assignableStylists.map((s) => (
                             <SelectItem key={s.id} value={s.id}>
                               {s.name}

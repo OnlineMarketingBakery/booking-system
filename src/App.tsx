@@ -2,7 +2,7 @@ import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { BrowserRouter, Routes, Route } from "react-router-dom";
+import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { AuthProvider } from "@/contexts/AuthContext";
 import { ProtectedRoute } from "@/components/ProtectedRoute";
 import { DashboardLayout } from "@/components/DashboardLayout";
@@ -21,6 +21,8 @@ import Services from "./pages/dashboard/Services";
 import CalendarPage from "./pages/dashboard/CalendarPage";
 import Embed from "./pages/dashboard/Embed";
 import SettingsPage from "./pages/dashboard/SettingsPage";
+import { SettingsLayout } from "./components/settings/SettingsLayout";
+import IntegrationsPage from "./pages/dashboard/IntegrationsPage";
 import HolidaysPage from "./pages/dashboard/HolidaysPage";
 import Customers from "./pages/dashboard/Customers";
 import SuperAdminDashboard from "./pages/dashboard/SuperAdminDashboard";
@@ -67,16 +69,23 @@ const App = () => {
               <Route path="locations" element={<Locations />} />
               <Route path="bookings" element={<BookingsLayout />}>
                 <Route index element={<Bookings />} />
-                <Route path="settings" element={<BookingSettingsPage />} />
+                <Route path="settings" element={<Navigate to="/dashboard/settings/booking-settings" replace />} />
               </Route>
               <Route path="staff" element={<Staff />} />
               <Route path="services" element={<Services />} />
               <Route path="calendar" element={<CalendarPage />} />
-              <Route path="embed" element={<Embed />} />
-              <Route path="holidays" element={<HolidaysPage />} />
+              <Route path="embed" element={<Navigate to="/dashboard/settings/embed" replace />} />
+              <Route path="holidays" element={<Navigate to="/dashboard/settings/holidays" replace />} />
               <Route path="customers" element={<Customers />} />
               <Route path="admin" element={<SuperAdminDashboard />} />
-              <Route path="settings" element={<SettingsPage />} />
+              <Route path="settings" element={<SettingsLayout />}>
+                <Route index element={<Navigate to="general" replace />} />
+                <Route path="general" element={<SettingsPage />} />
+                <Route path="integrations" element={<IntegrationsPage />} />
+                <Route path="holidays" element={<HolidaysPage />} />
+                <Route path="embed" element={<Embed />} />
+                <Route path="booking-settings" element={<BookingSettingsPage />} />
+              </Route>
             </Route>
             <Route path="*" element={<NotFound />} />
           </Routes>
