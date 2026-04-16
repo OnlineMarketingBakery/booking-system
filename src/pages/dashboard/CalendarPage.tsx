@@ -39,11 +39,9 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { Loader2, ChevronLeft, ChevronRight, Calendar as CalendarIcon, Plus, ExternalLink, MapPin, Pencil, CalendarClock, Trash2 } from "lucide-react";
 import {
   format,
-  startOfWeek,
   addDays,
   addWeeks,
   subWeeks,
-  isSameDay,
   setHours,
   setMinutes,
   startOfDay,
@@ -52,13 +50,17 @@ import {
   min,
   differenceInMinutes,
 } from "date-fns";
+import { formatInTimeZone, fromZonedTime } from "date-fns-tz";
 import { toast } from "@/hooks/use-toast";
 import {
   formatInOrgTz,
   getOrgIanaTimezone,
+  orgAddCalendarDaysFromYmd,
   orgDayKey,
+  orgMondayYmdContainingInstant,
   orgNowTimeHhmm,
   orgPickerDateAndTimeToUtc,
+  orgWallDateTimeToUtc,
   utcToOrgLocalCalendarDate,
 } from "@/lib/orgTimezone";
 
@@ -81,23 +83,28 @@ function snappedMinutesFromY(yPx: number): number {
   return Math.max(bandMin, Math.min(snapped, bandMaxExclusive));
 }
 
-function dateFromDayMinutes(day: Date, minutesSinceMidnight: number): Date {
+function dateFromDayMinutesOrg(orgYmd: string, minutesSinceMidnight: number, orgTz: string): Date {
   const h = Math.floor(minutesSinceMidnight / 60);
   const m = minutesSinceMidnight % 60;
-  return setMinutes(setHours(startOfDay(day), h), m);
+  return orgWallDateTimeToUtc(
+    orgYmd,
+    `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`,
+    orgTz,
+  );
 }
 
-function isBandMinuteInPast(day: Date, minutesSinceMidnight: number): boolean {
-  return isBefore(dateFromDayMinutes(day, minutesSinceMidnight), new Date());
+function isBandMinuteInPastOrg(orgYmd: string, minutesSinceMidnight: number, orgTz: string): boolean {
+  return isBefore(dateFromDayMinutesOrg(orgYmd, minutesSinceMidnight, orgTz), new Date());
 }
 
-/** First 15m grid point at or after now (same calendar day only). */
-function firstSnappedMinuteNotPast(day: Date): number | null {
-  if (!isSameDay(day, new Date())) return null;
+/** First 15m grid point at or after now (same org calendar day only). */
+function firstSnappedMinuteNotPastOrg(orgYmd: string, orgTz: string): number | null {
+  if (orgDayKey(new Date(), orgTz) !== orgYmd) return null;
   const bandMin = CAL_START_HOUR * 60;
   const bandMaxExclusive = CAL_END_HOUR * 60;
   const now = new Date();
-  const t = now.getHours() * 60 + now.getMinutes();
+  const t =
+    Number(formatInTimeZone(now, orgTz, "H")) * 60 + Number(formatInTimeZone(now, orgTz, "m"));
   const snapped = Math.ceil(t / SNAP_MINUTES) * SNAP_MINUTES;
   const v = Math.max(bandMin, snapped);
   if (v >= bandMaxExclusive) return null;
@@ -115,30 +122,45 @@ const QUARTER_GRID_STYLE: CSSProperties = {
   )`,
 };
 
-function dayColumnTimeRange(day: Date) {
-  const start = setMinutes(setHours(startOfDay(day), CAL_START_HOUR), 0);
-  const end = setMinutes(setHours(startOfDay(day), CAL_END_HOUR), 0);
+function dayColumnTimeRangeOrg(orgYmd: string, orgTz: string) {
+  const start = orgWallDateTimeToUtc(
+    orgYmd,
+    `${String(CAL_START_HOUR).padStart(2, "0")}:00`,
+    orgTz,
+  );
+  const end = orgWallDateTimeToUtc(
+    orgYmd,
+    `${String(CAL_END_HOUR).padStart(2, "0")}:00`,
+    orgTz,
+  );
   return { start, end };
 }
 
-/** Whether the event should appear in this calendar day column and overlaps the visible time band. */
-function slotBelongsToCalendarDay(day: Date, start: Date, end: Date): boolean {
-  const day0 = startOfDay(day);
-  const day1 = addDays(day0, 1);
-  if (end <= day0 || start >= day1) return false;
-  const { start: bandStart, end: bandEnd } = dayColumnTimeRange(day);
+/** Whether the event should appear in this org-local calendar column and overlaps the visible time band. */
+function slotBelongsToCalendarDayOrg(orgYmd: string, start: Date, end: Date, orgTz: string): boolean {
+  const dayStart = orgWallDateTimeToUtc(orgYmd, "00:00", orgTz);
+  const nextYmd = orgAddCalendarDaysFromYmd(orgYmd, 1, orgTz);
+  const dayEndExclusive = orgWallDateTimeToUtc(nextYmd, "00:00", orgTz);
+  if (end <= dayStart || start >= dayEndExclusive) return false;
+  const { start: bandStart, end: bandEnd } = dayColumnTimeRangeOrg(orgYmd, orgTz);
   const t0 = max([start, bandStart]);
   const t1 = min([end, bandEnd]);
   return t1 > t0;
 }
 
 /** Top offset and height in px for an event block inside the day column. */
-function layoutEventBlock(eventStart: Date, eventEnd: Date, day: Date): { top: number; height: number } | null {
-  const { start: colStart, end: colEnd } = dayColumnTimeRange(day);
-  const day0 = startOfDay(day);
-  const day1 = addDays(day0, 1);
-  const t0Ms = Math.max(eventStart.getTime(), colStart.getTime(), day0.getTime());
-  const t1Ms = Math.min(eventEnd.getTime(), colEnd.getTime(), day1.getTime());
+function layoutEventBlockOrg(
+  eventStart: Date,
+  eventEnd: Date,
+  orgYmd: string,
+  orgTz: string,
+): { top: number; height: number } | null {
+  const { start: colStart, end: colEnd } = dayColumnTimeRangeOrg(orgYmd, orgTz);
+  const dayStart = orgWallDateTimeToUtc(orgYmd, "00:00", orgTz);
+  const nextYmd = orgAddCalendarDaysFromYmd(orgYmd, 1, orgTz);
+  const dayEndExclusive = orgWallDateTimeToUtc(nextYmd, "00:00", orgTz);
+  const t0Ms = Math.max(eventStart.getTime(), colStart.getTime(), dayStart.getTime());
+  const t1Ms = Math.min(eventEnd.getTime(), colEnd.getTime(), dayEndExclusive.getTime());
   if (t1Ms <= t0Ms) return null;
   const msPerHour = 60 * 60 * 1000;
   const topPx = ((t0Ms - colStart.getTime()) / msPerHour) * HOUR_ROW_PX;
@@ -338,7 +360,8 @@ function isSalonOriginGcalSlot(s: CalendarSlot, currentOrganizationId: string): 
 }
 
 function collectSlotsForCalendarDay(
-  day: Date,
+  orgYmd: string,
+  orgTz: string,
   locationId: string,
   orgBookings: any[],
   gcalConnected: boolean,
@@ -353,7 +376,7 @@ function collectSlotsForCalendarDay(
       if (!e.start) continue;
       const eStart = new Date(e.start);
       const eEnd = new Date(e.end || e.start);
-      if (!slotBelongsToCalendarDay(day, eStart, eEnd)) continue;
+      if (!slotBelongsToCalendarDayOrg(orgYmd, eStart, eEnd, orgTz)) continue;
       if (locationId && e.location_id != null && String(e.location_id) !== String(locationId)) continue;
       if (
         locationId &&
@@ -383,7 +406,7 @@ function collectSlotsForCalendarDay(
     for (const b of bookingsForThisLocation) {
       const start = new Date(b.start_time);
       const end = new Date(b.end_time);
-      if (!slotBelongsToCalendarDay(day, start, end)) continue;
+      if (!slotBelongsToCalendarDayOrg(orgYmd, start, end, orgTz)) continue;
       if (b.gcal_event_id && gcalEventIdsShown.has(String(b.gcal_event_id))) continue;
       const svc = b.services as { name?: string } | null;
       const staffName = (b.staff as { name?: string } | null)?.name;
@@ -405,7 +428,7 @@ function collectSlotsForCalendarDay(
   for (const b of bookingsForThisLocation) {
     const start = new Date(b.start_time);
     const end = new Date(b.end_time);
-    if (!slotBelongsToCalendarDay(day, start, end)) continue;
+    if (!slotBelongsToCalendarDayOrg(orgYmd, start, end, orgTz)) continue;
     const svc = b.services as { name?: string } | null;
     const staffName = (b.staff as { name?: string } | null)?.name;
     slots.push({
@@ -445,21 +468,23 @@ function resolveBookingForSlot(
 }
 
 type CalendarWeekGridProps = {
-  weekDays: Date[];
+  weekOrgDayKeys: string[];
+  orgTimeZone: string;
   orgBookings: any[];
   gcalEvents: any[];
   gcalConnected: boolean;
   locationId: string;
   firstLocationId: string;
   organizationId: string;
-  onAddBooking: (day: Date, hour: number) => void;
-  onAddBookingRange: (day: Date, start: Date, end: Date) => void;
+  onAddBooking: (orgYmd: string, hour: number) => void;
+  onAddBookingRange: (orgYmd: string, start: Date, end: Date) => void;
   onSelectBooking: (booking: any) => void;
   onSelectOrphanGcal: (ev: { id: string; summary: string; start: string; end: string }) => void;
 };
 
 function CalendarWeekGrid({
-  weekDays,
+  weekOrgDayKeys,
+  orgTimeZone,
   orgBookings,
   gcalEvents,
   gcalConnected,
@@ -471,6 +496,7 @@ function CalendarWeekGrid({
   onSelectBooking,
   onSelectOrphanGcal,
 }: CalendarWeekGridProps) {
+  const viewerTz = Intl.DateTimeFormat().resolvedOptions().timeZone ?? "UTC";
   const slotDragRef = useRef<{
     dayKey: string;
     pointerId: number;
@@ -492,29 +518,37 @@ function CalendarWeekGrid({
     const lo = Math.min(d.startMin, d.curMin);
     const hi = Math.max(d.startMin, d.curMin);
     const span = hi - lo;
-    const day = weekDays.find((x) => format(x, "yyyy-MM-dd") === d.dayKey);
-    if (!day) return;
+    const orgYmd = d.dayKey;
+    if (!weekOrgDayKeys.includes(orgYmd)) return;
     if (span < SNAP_MINUTES) {
       const hour = Math.floor(lo / 60);
       const cappedHour = Math.min(HOURS[HOURS.length - 1], Math.max(CAL_START_HOUR, hour));
       if (cappedHour >= CAL_START_HOUR && cappedHour <= HOURS[HOURS.length - 1]) {
-        onAddBooking(day, cappedHour);
+        onAddBooking(orgYmd, cappedHour);
       }
     } else {
-      onAddBookingRange(day, dateFromDayMinutes(day, lo), dateFromDayMinutes(day, hi));
+      onAddBookingRange(
+        orgYmd,
+        dateFromDayMinutesOrg(orgYmd, lo, orgTimeZone),
+        dateFromDayMinutesOrg(orgYmd, hi, orgTimeZone),
+      );
     }
   };
+
+  const mondayOrgYmd = weekOrgDayKeys[0] ?? formatInTimeZone(new Date(), orgTimeZone, "yyyy-MM-dd");
 
   return (
     <div className="w-full min-w-0 overflow-x-auto">
       <div className="min-w-[640px]">
         <div className="grid grid-cols-[48px_repeat(7,minmax(0,1fr))] border-b-2 border-border bg-muted/50">
           <div className="shrink-0 border-r border-border bg-muted/70" aria-hidden />
-          {weekDays.map((day) => {
-            const isToday = isSameDay(day, new Date());
+          {weekOrgDayKeys.map((orgYmd) => {
+            const isToday = orgDayKey(new Date(), orgTimeZone) === orgYmd;
+            const [y, mo, d] = orgYmd.split("-").map(Number);
+            const headerUtc = fromZonedTime(new Date(y, mo - 1, d, 12, 0, 0, 0), orgTimeZone);
             return (
               <div
-                key={day.toISOString()}
+                key={orgYmd}
                 className={`min-w-0 border-l border-border py-2 text-center shadow-[inset_0_-1px_0_0_rgba(15,23,42,0.08)] ${
                   isToday ? "bg-primary/[0.14]" : "bg-muted/20"
                 }`}
@@ -524,8 +558,10 @@ function CalendarWeekGrid({
                     isToday ? "font-semibold text-primary" : "text-muted-foreground"
                   }`}
                 >
-                  {format(day, "EEE")}{" "}
-                  <span className={isToday ? "text-primary" : "text-foreground"}>{format(day, "d")}</span>
+                  {formatInTimeZone(headerUtc, viewerTz, "EEE")}{" "}
+                  <span className={isToday ? "text-primary" : "text-foreground"}>
+                    {formatInTimeZone(headerUtc, viewerTz, "d")}
+                  </span>
                 </p>
               </div>
             );
@@ -543,13 +579,18 @@ function CalendarWeekGrid({
                 className="relative z-[2] box-border shrink-0 border-b border-border/90 pr-1.5 pt-1 text-right text-[10px] font-medium tabular-nums text-muted-foreground sm:text-[11px]"
                 style={{ height: HOUR_ROW_PX }}
               >
-                {format(setHours(new Date(), hour), "h a")}
+                {formatInTimeZone(
+                  orgWallDateTimeToUtc(mondayOrgYmd, `${String(hour).padStart(2, "0")}:00`, orgTimeZone),
+                  viewerTz,
+                  "h a",
+                )}
               </div>
             ))}
           </div>
-          {weekDays.map((day) => {
+          {weekOrgDayKeys.map((orgYmd) => {
             const slots = collectSlotsForCalendarDay(
-              day,
+              orgYmd,
+              orgTimeZone,
               locationId,
               orgBookings,
               gcalConnected,
@@ -560,7 +601,7 @@ function CalendarWeekGrid({
             const overlapItems: OverlapLaneItem[] = [];
             for (const s of slots) {
               const endDate = new Date(s.end || s.start);
-              const layout = layoutEventBlock(new Date(s.start), endDate, day);
+              const layout = layoutEventBlockOrg(new Date(s.start), endDate, orgYmd, orgTimeZone);
               if (!layout) continue;
               let startMs = new Date(s.start).getTime();
               let endMs = new Date(s.end || s.start).getTime();
@@ -569,13 +610,13 @@ function CalendarWeekGrid({
             }
             const laneByKey = assignOverlapLanes(overlapItems);
 
-            const dayKey = format(day, "yyyy-MM-dd");
+            const dayKey = orgYmd;
 
             return (
               <div
-                key={day.toISOString()}
+                key={orgYmd}
                 className={`relative min-w-0 select-none touch-manipulation border-l border-border bg-background ${
-                  isSameDay(day, new Date()) ? "bg-primary/[0.06]" : ""
+                  orgDayKey(new Date(), orgTimeZone) === orgYmd ? "bg-primary/[0.06]" : ""
                 }`}
                 style={{ height: HOURS.length * HOUR_ROW_PX }}
                 onPointerDownCapture={(e) => {
@@ -588,8 +629,8 @@ function CalendarWeekGrid({
                   let y = e.clientY - rect.top;
                   y = Math.max(0, Math.min(rect.height - 1e-3, y));
                   let m = snappedMinutesFromY(y);
-                  if (isBandMinuteInPast(day, m)) {
-                    const fp = firstSnappedMinuteNotPast(day);
+                  if (isBandMinuteInPastOrg(orgYmd, m, orgTimeZone)) {
+                    const fp = firstSnappedMinuteNotPastOrg(orgYmd, orgTimeZone);
                     if (fp == null) return;
                     m = fp;
                   }
@@ -606,7 +647,7 @@ function CalendarWeekGrid({
                   let y = e.clientY - rect.top;
                   y = Math.max(0, Math.min(rect.height - 1e-3, y));
                   let m = snappedMinutesFromY(y);
-                  const fp = firstSnappedMinuteNotPast(day);
+                  const fp = firstSnappedMinuteNotPastOrg(orgYmd, orgTimeZone);
                   if (fp != null) m = Math.max(m, fp);
                   d.curMin = m;
                   setSlotDragUi({ ...d });
@@ -634,17 +675,21 @@ function CalendarWeekGrid({
               >
                 <div className="pointer-events-none absolute inset-0 z-[1]" style={QUARTER_GRID_STYLE} aria-hidden />
                 {HOURS.map((hour) => {
-                  const slotTime = setMinutes(setHours(startOfDay(day), hour), 0);
+                  const slotTime = orgWallDateTimeToUtc(
+                    orgYmd,
+                    `${String(hour).padStart(2, "0")}:00`,
+                    orgTimeZone,
+                  );
                   const isPastSlot = isBefore(slotTime, new Date());
                   const top = (hour - CAL_START_HOUR) * HOUR_ROW_PX;
-                  const isTodayCol = isSameDay(day, new Date());
+                  const isTodayCol = orgDayKey(new Date(), orgTimeZone) === orgYmd;
                   return (
                     <div
                       key={hour}
                       role={isPastSlot ? undefined : "button"}
                       tabIndex={isPastSlot ? undefined : 0}
                       onKeyDown={
-                        isPastSlot ? undefined : (e) => e.key === "Enter" && onAddBooking(day, hour)
+                        isPastSlot ? undefined : (e) => e.key === "Enter" && onAddBooking(orgYmd, hour)
                       }
                       style={{ top, height: HOUR_ROW_PX }}
                       className={`pointer-events-none absolute left-0 right-0 z-[2] box-border border-b border-border/90 p-1 ${
@@ -673,7 +718,7 @@ function CalendarWeekGrid({
                 <div className="pointer-events-none absolute inset-0 z-[3] overflow-visible">
                   {slots.map((s) => {
                     const endDate = new Date(s.end || s.start);
-                    const layout = layoutEventBlock(new Date(s.start), endDate, day);
+                    const layout = layoutEventBlockOrg(new Date(s.start), endDate, orgYmd, orgTimeZone);
                     if (!layout) return null;
                     const { lane, laneCount } = laneByKey.get(getSlotKey(s)) ?? {
                       lane: 0,
@@ -691,8 +736,8 @@ function CalendarWeekGrid({
                     const isOtherGoogleEvent = isOrphanGcal && !orphanIsSalonScoped;
                     const isClickable = isManageable || orphanIsSalonScoped;
                     const tooltipContent = booking
-                      ? `${booking.customer_name}${(booking.services as { name?: string })?.name ? ` · ${(booking.services as { name?: string }).name}` : ""}${(booking.staff as { name?: string })?.name ? ` · ${(booking.staff as { name?: string }).name}` : ""}\n${format(new Date(booking.start_time), "MMM d, h:mm a")} – ${format(new Date(booking.end_time), "h:mm a")}${booking.notes ? `\n${booking.notes}` : ""}`
-                      : `${s.summary}\n${format(new Date(s.start), "MMM d, h:mm a")}${s.end ? ` – ${format(new Date(s.end), "h:mm a")}` : ""}`;
+                      ? `${booking.customer_name}${(booking.services as { name?: string })?.name ? ` · ${(booking.services as { name?: string }).name}` : ""}${(booking.staff as { name?: string })?.name ? ` · ${(booking.staff as { name?: string }).name}` : ""}\n${formatInTimeZone(new Date(booking.start_time), viewerTz, "MMM d, h:mm a")} – ${formatInTimeZone(new Date(booking.end_time), viewerTz, "h:mm a")}${booking.notes ? `\n${booking.notes}` : ""}`
+                      : `${s.summary}\n${formatInTimeZone(new Date(s.start), viewerTz, "MMM d, h:mm a")}${s.end ? ` – ${formatInTimeZone(new Date(s.end), viewerTz, "h:mm a")}` : ""}`;
                     const weekBlock =
                       isManageable && booking
                         ? bookingWeekBlockStyles(
@@ -711,8 +756,8 @@ function CalendarWeekGrid({
                             {booking.customer_name?.trim() || s.summary}
                           </p>
                           <p className="min-h-0 truncate text-[10px] leading-snug text-foreground/70">
-                            {format(new Date(s.start), "h:mm a")}
-                            {s.end ? `–${format(new Date(s.end), "h:mm a")}` : ""}
+                            {formatInTimeZone(new Date(s.start), viewerTz, "h:mm a")}
+                            {s.end ? `–${formatInTimeZone(new Date(s.end), viewerTz, "h:mm a")}` : ""}
                             {svcName ? ` · ${svcName}` : ""}
                             {stfName ? ` · ${stfName}` : ""}
                           </p>
@@ -721,8 +766,8 @@ function CalendarWeekGrid({
                         <>
                           <p className="min-h-0 truncate text-[11px] font-medium leading-snug sm:text-xs">{s.summary}</p>
                           <p className="truncate text-[10px] leading-snug text-muted-foreground sm:text-[11px]">
-                            {format(new Date(s.start), "h:mm a")}
-                            {s.end ? ` · ${format(new Date(s.end), "h:mm a")}` : ""}
+                            {formatInTimeZone(new Date(s.start), viewerTz, "h:mm a")}
+                            {s.end ? ` · ${formatInTimeZone(new Date(s.end), viewerTz, "h:mm a")}` : ""}
                           </p>
                         </>
                       );
@@ -738,7 +783,7 @@ function CalendarWeekGrid({
                       return (
                         <div
                           key={getSlotKey(s)}
-                          title={`${s.summary} (${format(new Date(s.start), "MMM d, h:mm a")}) — Google only, not a salon booking`}
+                          title={`${s.summary} (${formatInTimeZone(new Date(s.start), viewerTz, "MMM d, h:mm a")}) — Google only, not a salon booking`}
                           style={cardStyle}
                           className="pointer-events-none absolute box-border flex min-h-0 flex-col justify-start gap-0.5 overflow-hidden rounded-none border-t border-r border-b-0 border-l border-dashed border-muted-foreground/40 bg-muted/40 p-1.5 text-xs text-muted-foreground"
                         >
@@ -823,11 +868,17 @@ export default function CalendarPage() {
   const [selectedBooking, setSelectedBooking] = useState<any | null>(null);
   const [selectedOrphanGcalEvent, setSelectedOrphanGcalEvent] = useState<{ id: string; summary: string; start: string; end: string } | null>(null);
 
-  const weekStart = startOfWeek(currentWeek, { weekStartsOn: 1 });
-  const weekDays = Array.from({ length: 7 }, (_, i) => addDays(weekStart, i));
+  const weekOrgDayKeys = useMemo(() => {
+    const mon = orgMondayYmdContainingInstant(currentWeek, orgTimeZone);
+    return Array.from({ length: 7 }, (_, i) => orgAddCalendarDaysFromYmd(mon, i, orgTimeZone));
+  }, [currentWeek, orgTimeZone]);
 
-  const rangeStart = weekDays[0].toISOString();
-  const rangeEnd = addDays(weekDays[6], 1).toISOString();
+  const rangeStart = orgWallDateTimeToUtc(weekOrgDayKeys[0], "00:00", orgTimeZone).toISOString();
+  const rangeEnd = orgWallDateTimeToUtc(
+    orgAddCalendarDaysFromYmd(weekOrgDayKeys[6], 1, orgTimeZone),
+    "00:00",
+    orgTimeZone,
+  ).toISOString();
 
   // Organization bookings for the week (include gcal_event_id to dedupe with Google Calendar)
   const {
@@ -936,20 +987,28 @@ export default function CalendarPage() {
     Promise.all([p1, p2]).finally(() => setRefreshingAfterNavigate(false));
   }, [organization?.id, gcalConnected]);
 
-  const openAddBooking = (day?: Date, hour?: number) => {
+  const openAddBooking = (orgYmd?: string, hour?: number) => {
     setSlotEnd(null);
-    if (day != null && hour != null) {
-      const start = setMinutes(setHours(startOfDay(day), hour), 0);
-      setSlotStart(start);
+    if (orgYmd != null && hour != null) {
+      setSlotStart(
+        orgWallDateTimeToUtc(orgYmd, `${String(hour).padStart(2, "0")}:00`, orgTimeZone),
+      );
     } else {
-      const now = new Date();
-      const nextHour = now.getHours() + 1;
-      setSlotStart(setMinutes(setHours(startOfDay(now), nextHour > 23 ? 0 : nextHour), 0));
+      const ymd = orgDayKey(new Date(), orgTimeZone);
+      const h = Number(formatInTimeZone(new Date(), orgTimeZone, "H"));
+      const nextHour = h + 1;
+      setSlotStart(
+        orgWallDateTimeToUtc(
+          ymd,
+          `${String(nextHour > 23 ? 0 : nextHour).padStart(2, "0")}:00`,
+          orgTimeZone,
+        ),
+      );
     }
     setAddBookingOpen(true);
   };
 
-  const openAddBookingRange = (day: Date, start: Date, end: Date) => {
+  const openAddBookingRange = (_orgYmd: string, start: Date, end: Date) => {
     setSlotStart(start);
     setSlotEnd(end);
     setAddBookingOpen(true);
@@ -984,7 +1043,14 @@ export default function CalendarPage() {
                 <p className="text-[11px] font-semibold uppercase leading-none tracking-wider text-muted-foreground">Schedule</p>
                 <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0">
                   <h1 className="text-lg font-semibold tracking-tight text-foreground sm:text-xl">Calendar</h1>
-                  <p className="text-sm text-muted-foreground">Week of {format(weekStart, "MMM d, yyyy")}</p>
+                  <p className="text-sm text-muted-foreground">
+                  Week of{" "}
+                  {formatInTimeZone(
+                    orgWallDateTimeToUtc(weekOrgDayKeys[0], "12:00", orgTimeZone),
+                    orgTimeZone,
+                    "MMM d, yyyy",
+                  )}
+                </p>
                 </div>
               </div>
             </div>
@@ -1067,14 +1133,15 @@ export default function CalendarPage() {
                 <div className="overflow-hidden rounded-lg border border-border bg-background shadow-sm">
                   <CalendarWeekGrid
                     key={effectiveLocationId}
-                    weekDays={weekDays}
+                    weekOrgDayKeys={weekOrgDayKeys}
+                    orgTimeZone={orgTimeZone}
                     orgBookings={orgBookings}
                     gcalEvents={gcalEvents}
                     gcalConnected={!!gcalConnected}
                     locationId={effectiveLocationId || ""}
                     firstLocationId={firstLocationId}
                     organizationId={organization?.id ?? ""}
-                    onAddBooking={(day, hour) => openAddBooking(day, hour)}
+                    onAddBooking={(ymd, hour) => openAddBooking(ymd, hour)}
                     onAddBookingRange={openAddBookingRange}
                     onSelectBooking={setSelectedBooking}
                     onSelectOrphanGcal={setSelectedOrphanGcalEvent}
@@ -1093,14 +1160,15 @@ export default function CalendarPage() {
               ) : (
                 <div className="overflow-hidden rounded-lg border border-border bg-background shadow-sm">
                   <CalendarWeekGrid
-                    weekDays={weekDays}
+                    weekOrgDayKeys={weekOrgDayKeys}
+                    orgTimeZone={orgTimeZone}
                     orgBookings={orgBookings}
                     gcalEvents={gcalEvents}
                     gcalConnected={!!gcalConnected}
                     locationId=""
                     firstLocationId={firstLocationId}
                     organizationId={organization?.id ?? ""}
-                    onAddBooking={(day, hour) => openAddBooking(day, hour)}
+                    onAddBooking={(ymd, hour) => openAddBooking(ymd, hour)}
                     onAddBookingRange={openAddBookingRange}
                     onSelectBooking={setSelectedBooking}
                     onSelectOrphanGcal={setSelectedOrphanGcalEvent}

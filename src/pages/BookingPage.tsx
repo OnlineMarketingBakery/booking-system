@@ -38,8 +38,6 @@ import {
   addDays,
   isBefore,
   isAfter,
-  setHours,
-  setMinutes,
 } from "date-fns";
 import { Day } from "react-day-picker";
 import { DEFAULT_EMBED_THEME, hexToHsl, hexToHslWithAlpha, hexToRgba, getContrastingTextColors } from "@/types/embedTheme";
@@ -54,6 +52,13 @@ import { BOOKING_SLOT_GRID_MINUTES } from "@/lib/bookingSlotConstants";
 import { getErrorMessage } from "@/lib/errorMessage";
 import { AddToCalendarButtons } from "@/components/AddToCalendarButtons";
 import type { CalendarEventInput } from "@/lib/calendarLinks";
+import {
+  civilCalendarDayOfWeek,
+  formatInOrgTz,
+  getOrgIanaTimezone,
+  orgLocalDayRangeUtcIso,
+  orgWallDateTimeToUtc,
+} from "@/lib/orgTimezone";
 
 const WIDGET_BOOKING_CAL_KEY = "salonora_widget_booking_cal_v1";
 
@@ -97,17 +102,18 @@ function readStoredWidgetCal(): CalendarEventInput | null {
 function eligibleStaffIdsForWallSlot(
   activeStaffAtLocation: Set<string>,
   staffOnlyBreaks: { start_time: string; end_time: string; organization_break_slot_staff?: { staff_id: string }[] }[],
-  dateStr: string,
-  slotWallStart: Date,
-  slotWallEnd: Date,
+  orgYmd: string,
+  orgTz: string,
+  slotUtcStart: Date,
+  slotUtcEnd: Date,
 ): string[] {
   return [...activeStaffAtLocation].filter((sid) =>
     !staffOnlyBreaks.some((brk) => {
       const ids = (brk.organization_break_slot_staff ?? []).map((x) => x.staff_id);
       if (!ids.includes(sid)) return false;
-      const bs = new Date(`${dateStr}T${brk.start_time.slice(0, 5)}:00`);
-      const be = new Date(`${dateStr}T${brk.end_time.slice(0, 5)}:00`);
-      return slotWallStart.getTime() < be.getTime() && slotWallEnd.getTime() > bs.getTime();
+      const bs = orgWallDateTimeToUtc(orgYmd, brk.start_time.slice(0, 5), orgTz);
+      const be = orgWallDateTimeToUtc(orgYmd, brk.end_time.slice(0, 5), orgTz);
+      return slotUtcStart.getTime() < be.getTime() && slotUtcEnd.getTime() > bs.getTime();
     }),
   );
 }
@@ -150,6 +156,8 @@ export default function BookingPage() {
   const [selectedLocation, setSelectedLocation] = useState<string>("");
   const [selectedServices, setSelectedServices] = useState<string[]>([]);
   const [selectedTime, setSelectedTime] = useState<string>("");
+  /** UTC instant for the chosen slot; display label is `selectedTime` in the viewer's local zone. */
+  const [selectedSlotStartMs, setSelectedSlotStartMs] = useState<number | null>(null);
   const [selectedDate, setSelectedDate] = useState<string>(
     format(new Date(), "yyyy-MM-dd"),
   );
@@ -185,7 +193,7 @@ export default function BookingPage() {
     queryFn: async () => {
       const { data, error } = await supabase
         .from("organizations_public")
-        .select("id, name, slug, logo_url, embed_theme, holiday_region, owner_default_staff_id")
+        .select("id, name, slug, logo_url, embed_theme, holiday_region, owner_default_staff_id, timezone")
         .eq("slug", slug)
         .maybeSingle();
       if (error) throw error;
@@ -195,6 +203,12 @@ export default function BookingPage() {
   });
 
   const adminRegion = (org as { holiday_region?: string } | null)?.holiday_region ?? "NL";
+  const orgTz = useMemo(() => getOrgIanaTimezone(org), [org]);
+
+  useEffect(() => {
+    setSelectedTime("");
+    setSelectedSlotStartMs(null);
+  }, [selectedDate]);
 
   const { data: holidayOverrides = [] } = useQuery({
     queryKey: ["booking-holiday-overrides", org?.id],
@@ -363,7 +377,8 @@ export default function BookingPage() {
     return (date: Date): string | null => {
       const dateStr = format(date, "yyyy-MM-dd");
       if (isBefore(date, new Date(new Date().toDateString()))) return "Past date";
-      if (locationAvailDays.length > 0 && !locationAvailDays.includes(date.getDay()))
+      const dow = civilCalendarDayOfWeek(dateStr);
+      if (locationAvailDays.length > 0 && !locationAvailDays.includes(dow))
         return "De locatie is vandaag gesloten.";
       if (offDayReasonMap.has(dateStr)) return offDayReasonMap.get(dateStr)!;
       if (holidayDatesSet.has(dateStr) && !holidayWorkingOverrideSet.has(dateStr))
@@ -379,6 +394,7 @@ export default function BookingPage() {
     queryKey: [
       "booking-slots",
       org?.id,
+      orgTz,
       ownerDefaultStaffId,
       selectedLocation,
       selectedDate,
@@ -393,8 +409,7 @@ export default function BookingPage() {
       const holidayDatesForRegion = getHolidayDatesForYears(adminRegion, holidayYears);
       const isWorkingOverride = holidayOverrides.some((o) => o.date === dateStr && o.is_working_day);
       if (holidayDatesForRegion.includes(dateStr) && !isWorkingOverride) return [];
-      const selDate = new Date(dateStr + "T00:00:00");
-      const dayOfWeek = selDate.getDay();
+      const dayOfWeek = civilCalendarDayOfWeek(dateStr);
       const { data: avail } = await supabase
         .from("location_availability")
         .select("*")
@@ -459,8 +474,7 @@ export default function BookingPage() {
       );
       if (openWindows.length === 0) return [];
 
-      const dayStart = new Date(selectedDate + "T00:00:00").toISOString();
-      const dayEnd = new Date(selectedDate + "T23:59:59").toISOString();
+      const { dayStart, dayEnd } = orgLocalDayRangeUtcIso(dateStr, orgTz);
 
       const { data: slotRows, error: slotErr } = await supabase.rpc(
         "get_location_booking_occupancy",
@@ -496,37 +510,27 @@ export default function BookingPage() {
       }
 
       const duration = totalDuration || 30;
-      const slots: { time: string; available: boolean }[] = [];
+      const slots: { time: string; startMs: number; available: boolean }[] = [];
 
       for (const a of openWindows) {
-        const [sh, sm] = a.start_time.split(":").map(Number);
-        const [eh, em] = a.end_time.split(":").map(Number);
-        let current = setMinutes(
-          setHours(new Date(selectedDate + "T00:00:00"), sh),
-          sm,
-        );
-        const end = setMinutes(
-          setHours(new Date(selectedDate + "T00:00:00"), eh),
-          em,
-        );
+        let current = orgWallDateTimeToUtc(dateStr, a.start_time.slice(0, 5), orgTz);
+        const openEnd = orgWallDateTimeToUtc(dateStr, a.end_time.slice(0, 5), orgTz);
 
-        while (isBefore(current, end)) {
+        while (current.getTime() < openEnd.getTime()) {
           const slotEnd = addMinutes(current, duration);
-          const fitsInWindow =
-            isBefore(slotEnd, end) || format(slotEnd, "HH:mm") === format(end, "HH:mm");
+          const fitsInWindow = slotEnd.getTime() <= openEnd.getTime();
           if (!fitsInWindow) {
             current = addMinutes(current, BOOKING_SLOT_GRID_MINUTES);
             continue;
           }
           const isPast = !isAfter(current, new Date());
-          const slotWallStart = current;
-          const slotWallEnd = slotEnd;
           const breakFilteredReal = eligibleStaffIdsForWallSlot(
             activeStaffAtLocation,
             staffOnlyBreaks,
             dateStr,
-            slotWallStart,
-            slotWallEnd,
+            orgTz,
+            current,
+            slotEnd,
           );
           const eligibleForSlot =
             activeStaffAtLocation.size > 0
@@ -558,9 +562,9 @@ export default function BookingPage() {
               return wallIntervalsOverlap(intervalStartMs, intervalEndMs, es, ee);
             });
           const wallOverlapBreak = (bStart: string, bEnd: string) => {
-            const bs = new Date(`${dateStr}T${bStart.slice(0, 5)}:00`);
-            const be = new Date(`${dateStr}T${bEnd.slice(0, 5)}:00`);
-            return slotWallStart.getTime() < be.getTime() && slotWallEnd.getTime() > bs.getTime();
+            const bs = orgWallDateTimeToUtc(dateStr, bStart.slice(0, 5), orgTz);
+            const be = orgWallDateTimeToUtc(dateStr, bEnd.slice(0, 5), orgTz);
+            return current.getTime() < be.getTime() && slotEnd.getTime() > bs.getTime();
           };
 
           let staffBreakAllowsSlot = true;
@@ -577,6 +581,7 @@ export default function BookingPage() {
           if (!isPast) {
             slots.push({
               time: format(current, "HH:mm"),
+              startMs: current.getTime(),
               available: !bookingConflict && !gcalConflict && staffBreakAllowsSlot,
             });
           }
@@ -585,7 +590,7 @@ export default function BookingPage() {
       }
       return slots;
     },
-    enabled: !!selectedLocation && !!selectedDate && selectedServices.length > 0,
+    enabled: !!selectedLocation && !!selectedDate && selectedServices.length > 0 && !!org?.id,
   });
 
   const toggleService = (serviceId: string) => {
@@ -617,11 +622,13 @@ export default function BookingPage() {
       return;
     }
     setBooking(true);
-    const [h, m] = selectedTime.split(":").map(Number);
-    const startTime = setMinutes(
-      setHours(new Date(selectedDate + "T00:00:00"), h),
-      m,
-    );
+    if (selectedSlotStartMs == null) {
+      setBooking(false);
+      toast({ title: "Select a time", description: "Please choose an available time slot.", variant: "destructive" });
+      return;
+    }
+    const startTime = new Date(selectedSlotStartMs);
+    const customerSlotTimeOrg = formatInOrgTz(startTime, orgTz, "HH:mm");
 
     try {
       const { data, error } = await supabase.functions.invoke(
@@ -636,7 +643,7 @@ export default function BookingPage() {
             customer_phone: phone,
             start_time: startTime.toISOString(),
             customer_slot_date: selectedDate,
-            customer_slot_time: selectedTime,
+            customer_slot_time: customerSlotTimeOrg,
             save_my_info: saveMyInfo,
             region: adminRegion,
           },
@@ -1229,7 +1236,7 @@ export default function BookingPage() {
                       disabled={(date) =>
                         isBefore(date, new Date(new Date().toDateString())) ||
                         (locationAvailDays.length > 0 &&
-                          !locationAvailDays.includes(date.getDay())) ||
+                          !locationAvailDays.includes(civilCalendarDayOfWeek(format(date, "yyyy-MM-dd")))) ||
                         isOffDay(date)
                       }
                       components={{
@@ -1273,14 +1280,15 @@ export default function BookingPage() {
                         .filter((t) => t.available)
                         .map((t) => (
                           <Button
-                            key={t.time}
+                            key={t.startMs}
                             variant={
-                              selectedTime === t.time ? "default" : "outline"
+                              selectedSlotStartMs === t.startMs ? "default" : "outline"
                             }
                             size="sm"
-                            className={selectedTime !== t.time ? "embed-outline-btn" : ""}
+                            className={selectedSlotStartMs !== t.startMs ? "embed-outline-btn" : ""}
                             onClick={() => {
                               setSelectedTime(t.time);
+                              setSelectedSlotStartMs(t.startMs);
                               setStep("details");
                             }}
                           >
