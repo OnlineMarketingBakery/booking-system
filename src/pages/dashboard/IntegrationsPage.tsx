@@ -176,7 +176,9 @@ export default function IntegrationsPage() {
             <Calendar className="h-5 w-5 text-primary" />
             Salon time zone
           </CardTitle>
-          <CardDescription>Used for confirmation emails and Google Calendar event times.</CardDescription>
+          <CardDescription>
+            Used for confirmation emails, the dashboard calendar, and Google Calendar event times.
+          </CardDescription>
         </CardHeader>
         <CardContent className="max-w-md space-y-2">
           <Label>Time zone</Label>

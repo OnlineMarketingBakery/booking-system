@@ -53,6 +53,14 @@ import {
   differenceInMinutes,
 } from "date-fns";
 import { toast } from "@/hooks/use-toast";
+import {
+  formatInOrgTz,
+  getOrgIanaTimezone,
+  orgDayKey,
+  orgNowTimeHhmm,
+  orgPickerDateAndTimeToUtc,
+  utcToOrgLocalCalendarDate,
+} from "@/lib/orgTimezone";
 
 const HOURS = Array.from({ length: 12 }, (_, i) => i + 8);
 const CAL_START_HOUR = HOURS[0];
@@ -803,6 +811,7 @@ function CalendarWeekGrid({
 
 export default function CalendarPage() {
   const { organization } = useOrganization();
+  const orgTimeZone = getOrgIanaTimezone(organization);
   const { user } = useAuth();
   const queryClient = useQueryClient();
   const [currentWeek, setCurrentWeek] = useState(new Date());
@@ -1109,6 +1118,7 @@ export default function CalendarPage() {
         onOpenChange={(open) => !open && setSelectedOrphanGcalEvent(null)}
         userId={user?.id ?? ""}
         organizationId={organization?.id ?? ""}
+        orgTimeZone={orgTimeZone}
         defaultLocationId={effectiveLocationId || ""}
         onRemoveSuccess={() => {
           queryClient.invalidateQueries({ queryKey: ["gcal-events"] });
@@ -1130,6 +1140,7 @@ export default function CalendarPage() {
         open={!!selectedBooking}
         onOpenChange={(open) => !open && setSelectedBooking(null)}
         organizationId={organization?.id ?? ""}
+        orgTimeZone={orgTimeZone}
         userId={user?.id ?? ""}
         gcalConnected={!!gcalConnected}
         onSuccess={() => {
@@ -1146,6 +1157,7 @@ export default function CalendarPage() {
           if (!open) closeAddBooking();
         }}
         organizationId={organization?.id ?? ""}
+        orgTimeZone={orgTimeZone}
         initialStart={slotStart}
         initialEnd={slotEnd}
         defaultLocationId={selectedLocationId}
@@ -1168,6 +1180,7 @@ type AddBookingDialogProps = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   organizationId: string;
+  orgTimeZone: string;
   initialStart: Date | null;
   /** When set with `initialStart`, booking end time follows this range (editable). */
   initialEnd?: Date | null;
@@ -1180,6 +1193,7 @@ function AddBookingDialog({
   open,
   onOpenChange,
   organizationId,
+  orgTimeZone,
   initialStart,
   initialEnd = null,
   defaultLocationId,
@@ -1195,12 +1209,14 @@ function AddBookingDialog({
   const [customerLastName, setCustomerLastName] = useState("");
   const [customerEmail, setCustomerEmail] = useState("");
   const [customerPhone, setCustomerPhone] = useState("");
-  const [startDate, setStartDate] = useState<Date>(() => initialStart ? new Date(initialStart) : new Date());
+  const [startDate, setStartDate] = useState<Date>(() =>
+    initialStart ? utcToOrgLocalCalendarDate(initialStart, orgTimeZone) : new Date(),
+  );
   const [startTime, setStartTime] = useState(() =>
-    initialStart ? format(initialStart, "HH:mm") : format(new Date(Date.now() + 3600000), "HH:mm")
+    initialStart ? formatInOrgTz(initialStart, orgTimeZone, "HH:mm") : format(new Date(Date.now() + 3600000), "HH:mm"),
   );
   const [endTime, setEndTime] = useState(() =>
-    initialEnd ? format(initialEnd, "HH:mm") : "10:00"
+    initialEnd ? formatInOrgTz(initialEnd, orgTimeZone, "HH:mm") : "10:00",
   );
   const [useCustomLength, setUseCustomLength] = useState(!!initialEnd);
   const [notes, setNotes] = useState("");
@@ -1227,8 +1243,8 @@ function AddBookingDialog({
   useEffect(() => {
     if (!open) return;
     if (initialStart) {
-      setStartDate(new Date(initialStart));
-      setStartTime(format(initialStart, "HH:mm"));
+      setStartDate(utcToOrgLocalCalendarDate(initialStart, orgTimeZone));
+      setStartTime(formatInOrgTz(initialStart, orgTimeZone, "HH:mm"));
     } else {
       const now = new Date();
       const next = new Date(now.getTime() + 3600000);
@@ -1236,12 +1252,12 @@ function AddBookingDialog({
       setStartTime(format(next, "HH:mm"));
     }
     if (initialEnd) {
-      setEndTime(format(initialEnd, "HH:mm"));
+      setEndTime(formatInOrgTz(initialEnd, orgTimeZone, "HH:mm"));
       setUseCustomLength(true);
     } else {
       setUseCustomLength(false);
     }
-  }, [open, initialStart, initialEnd]);
+  }, [open, initialStart, initialEnd, orgTimeZone]);
 
   useEffect(() => {
     if (open && defaultLocationId) setLocationId(defaultLocationId);
@@ -1267,19 +1283,15 @@ function AddBookingDialog({
     }
   }, [open]);
 
-  // When date is today, keep time from being in the past (enforce min time)
+  // When date is "today" in the salon zone, keep time from being in the past (enforce min time)
   useEffect(() => {
     if (!open || !startDate) return;
-    const todayStart = startOfDay(new Date());
-    if (startOfDay(startDate).getTime() !== todayStart.getTime()) return;
-    const [h, m] = startTime.split(":").map(Number);
-    const chosen = new Date(startDate);
-    chosen.setHours(h, m, 0, 0);
-    const now = new Date();
-    if (!isBefore(chosen, now)) return;
-    const min = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
+    if (orgDayKey(startDate, orgTimeZone) !== orgDayKey(new Date(), orgTimeZone)) return;
+    const min = orgNowTimeHhmm(orgTimeZone);
+    const chosenUtc = orgPickerDateAndTimeToUtc(startDate, startTime, orgTimeZone);
+    if (!isBefore(chosenUtc, new Date())) return;
     if (startTime !== min) setStartTime(min);
-  }, [open, startDate, startTime]);
+  }, [open, startDate, startTime, orgTimeZone]);
 
   const { data: locations = [] } = useQuery({
     queryKey: ["locations", organizationId],
@@ -1334,14 +1346,10 @@ function AddBookingDialog({
 
   const createMutation = useMutation({
     mutationFn: async () => {
-      const [h, m] = startTime.split(":").map(Number);
-      const start = new Date(startDate);
-      start.setHours(h, m, 0, 0);
+      const start = orgPickerDateAndTimeToUtc(startDate, startTime, orgTimeZone);
       let end: Date;
       if (useCustomLength) {
-        const [eh, em] = endTime.split(":").map(Number);
-        end = new Date(startDate);
-        end.setHours(eh, em, 0, 0);
+        end = orgPickerDateAndTimeToUtc(startDate, endTime, orgTimeZone);
       } else {
         const duration = selectedService?.duration_minutes ?? 30;
         end = new Date(start.getTime() + duration * 60000);
@@ -1404,17 +1412,13 @@ function AddBookingDialog({
       toast({ title: "Select location and service", variant: "destructive" });
       return;
     }
-    const [h, m] = startTime.split(":").map(Number);
-    const start = new Date(startDate);
-    start.setHours(h, m, 0, 0);
+    const start = orgPickerDateAndTimeToUtc(startDate, startTime, orgTimeZone);
     if (isBefore(start, new Date())) {
       toast({ title: "Start time must be in the future", variant: "destructive" });
       return;
     }
     if (useCustomLength) {
-      const [eh, em] = endTime.split(":").map(Number);
-      const end = new Date(startDate);
-      end.setHours(eh, em, 0, 0);
+      const end = orgPickerDateAndTimeToUtc(startDate, endTime, orgTimeZone);
       if (end.getTime() <= start.getTime()) {
         toast({ title: "End time must be after start time", variant: "destructive" });
         return;
@@ -1427,12 +1431,9 @@ function AddBookingDialog({
     createMutation.mutate();
   };
 
-  const todayStart = startOfDay(new Date());
-  const isSelectedToday = startDate && startOfDay(startDate).getTime() === todayStart.getTime();
-  const now = new Date();
-  const minTime = isSelectedToday
-    ? `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`
-    : undefined;
+  const isSelectedToday = startDate && orgDayKey(startDate, orgTimeZone) === orgDayKey(new Date(), orgTimeZone);
+  const minTime = isSelectedToday ? orgNowTimeHhmm(orgTimeZone) : undefined;
+  const minDateYmd = orgDayKey(new Date(), orgTimeZone);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -1596,7 +1597,7 @@ function AddBookingDialog({
                 type="date"
                 value={format(startDate, "yyyy-MM-dd")}
                 onChange={(e) => setStartDate(e.target.value ? new Date(e.target.value) : startDate)}
-                min={format(todayStart, "yyyy-MM-dd")}
+                min={minDateYmd}
               />
             </div>
           )}
@@ -1657,6 +1658,7 @@ type OrphanGcalEventDialogProps = {
   onOpenChange: (open: boolean) => void;
   userId: string;
   organizationId: string;
+  orgTimeZone: string;
   defaultLocationId: string;
   onRemoveSuccess: () => void;
   onLinked: (booking: any) => void;
@@ -1670,6 +1672,7 @@ function OrphanGcalEventDialog({
   onOpenChange,
   userId,
   organizationId,
+  orgTimeZone,
   defaultLocationId,
   onRemoveSuccess,
   onLinked,
@@ -1696,12 +1699,12 @@ function OrphanGcalEventDialog({
     setCustomerPhone("");
     setNotes("");
     const s = new Date(event.start);
-    setStartDate(s);
-    setStartTime(format(s, "HH:mm"));
+    setStartDate(utcToOrgLocalCalendarDate(s, orgTimeZone));
+    setStartTime(formatInOrgTz(s, orgTimeZone, "HH:mm"));
     setServiceId("");
     setStaffId(ORPHAN_STAFF_ANY);
     setLocationId(defaultLocationId || "");
-  }, [open, event, defaultLocationId]);
+  }, [open, event, defaultLocationId, orgTimeZone]);
 
   const { data: locations = [] } = useQuery({
     queryKey: ["orphan-gcal-locations", organizationId],
@@ -1755,9 +1758,7 @@ function OrphanGcalEventDialog({
   const linkMutation = useMutation({
     mutationFn: async () => {
       if (!event || !organizationId) throw new Error("Missing event or organization");
-      const [h, m] = startTime.split(":").map(Number);
-      const start = new Date(startDate);
-      start.setHours(h, m, 0, 0);
+      const start = orgPickerDateAndTimeToUtc(startDate, startTime, orgTimeZone);
       const durationMin = selectedService?.duration_minutes ?? 30;
       const end = new Date(start.getTime() + durationMin * 60000);
       const customerName = [customerFirstName.trim(), customerLastName.trim()].filter(Boolean).join(" ").trim();
@@ -1774,8 +1775,8 @@ function OrphanGcalEventDialog({
         status: "confirmed" as const,
         gcal_event_id: event.id,
         notes: notes.trim() || null,
-        customer_slot_date: format(start, "yyyy-MM-dd"),
-        customer_slot_time: format(start, "HH:mm"),
+        customer_slot_date: orgDayKey(start, orgTimeZone),
+        customer_slot_time: formatInOrgTz(start, orgTimeZone, "HH:mm"),
       };
       const { data, error } = await supabase
         .from("bookings")
@@ -2000,6 +2001,7 @@ type ManageBookingDialogProps = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   organizationId: string;
+  orgTimeZone: string;
   userId: string;
   gcalConnected: boolean;
   onSuccess: () => void;
@@ -2010,6 +2012,7 @@ function ManageBookingDialog({
   open,
   onOpenChange,
   organizationId,
+  orgTimeZone,
   userId,
   gcalConnected,
   onSuccess,
@@ -2023,18 +2026,16 @@ function ManageBookingDialog({
 
   useEffect(() => {
     if (open && booking) {
-      setRescheduleDate(new Date(booking.start_time));
-      setRescheduleTime(format(new Date(booking.start_time), "HH:mm"));
+      setRescheduleDate(utcToOrgLocalCalendarDate(booking.start_time, orgTimeZone));
+      setRescheduleTime(formatInOrgTz(booking.start_time, orgTimeZone, "HH:mm"));
     }
-  }, [open, booking]);
+  }, [open, booking, orgTimeZone]);
 
   const rescheduleMutation = useMutation({
     mutationFn: async () => {
       if (!booking || !rescheduleDate || !rescheduleTime) return;
       const duration = (booking.services as { duration_minutes?: number })?.duration_minutes ?? 30;
-      const start = new Date(rescheduleDate);
-      const [h, m] = rescheduleTime.split(":").map(Number);
-      start.setHours(h, m, 0, 0);
+      const start = orgPickerDateAndTimeToUtc(rescheduleDate, rescheduleTime, orgTimeZone);
       const end = new Date(start.getTime() + duration * 60000);
       const { error } = await supabase
         .from("bookings")
@@ -2139,16 +2140,14 @@ function ManageBookingDialog({
     },
   });
 
-  const todayStart = startOfDay(new Date());
-  const isSelectedToday = rescheduleDate && startOfDay(rescheduleDate).getTime() === todayStart.getTime();
-  const now = new Date();
-  const minTimeToday = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
+  const rescheduleMinDateYmd = orgDayKey(new Date(), orgTimeZone);
+  const isSelectedToday =
+    rescheduleDate && orgDayKey(rescheduleDate, orgTimeZone) === orgDayKey(new Date(), orgTimeZone);
+  const minTimeToday = orgNowTimeHhmm(orgTimeZone);
 
   const handleReschedule = () => {
     if (!rescheduleDate || !rescheduleTime || !booking) return;
-    const start = new Date(rescheduleDate);
-    const [h, m] = rescheduleTime.split(":").map(Number);
-    start.setHours(h, m, 0, 0);
+    const start = orgPickerDateAndTimeToUtc(rescheduleDate, rescheduleTime, orgTimeZone);
     if (isBefore(start, new Date())) {
       toast({ title: "Choose a date and time in the future", variant: "destructive" });
       return;
@@ -2195,8 +2194,13 @@ function ManageBookingDialog({
               </div>
               <div className="min-w-0 overflow-hidden">
                 <p className="text-xs font-medium text-muted-foreground">Date & time</p>
-                <p className="truncate" title={`${format(new Date(booking.start_time), "MMM d, yyyy")} · ${format(new Date(booking.start_time), "h:mm a")} – ${format(new Date(booking.end_time), "h:mm a")}`}>
-                  {format(new Date(booking.start_time), "MMM d, yyyy")} · {format(new Date(booking.start_time), "h:mm a")} – {format(new Date(booking.end_time), "h:mm a")}
+                <p
+                  className="truncate"
+                  title={`${formatInOrgTz(booking.start_time, orgTimeZone, "MMM d, yyyy")} · ${formatInOrgTz(booking.start_time, orgTimeZone, "h:mm a")} – ${formatInOrgTz(booking.end_time, orgTimeZone, "h:mm a")}`}
+                >
+                  {formatInOrgTz(booking.start_time, orgTimeZone, "MMM d, yyyy")} ·{" "}
+                  {formatInOrgTz(booking.start_time, orgTimeZone, "h:mm a")} –{" "}
+                  {formatInOrgTz(booking.end_time, orgTimeZone, "h:mm a")}
                 </p>
               </div>
               <div className="min-w-0 overflow-hidden col-span-2">
@@ -2276,7 +2280,7 @@ function ManageBookingDialog({
                     mode="single"
                     selected={rescheduleDate}
                     onSelect={setRescheduleDate}
-                    disabled={(date) => isBefore(startOfDay(date), todayStart)}
+                    disabled={(date) => format(date, "yyyy-MM-dd") < rescheduleMinDateYmd}
                   />
                 </PopoverContent>
               </Popover>
@@ -2328,6 +2332,7 @@ function ManageBookingDialog({
         open={editOpen}
         onOpenChange={setEditOpen}
         organizationId={organizationId}
+        orgTimeZone={orgTimeZone}
         booking={booking}
         onSuccess={() => {
           queryClient.invalidateQueries({ queryKey: ["calendar-bookings"] });
@@ -2349,11 +2354,19 @@ type EditBookingDialogProps = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   organizationId: string;
+  orgTimeZone: string;
   booking: any;
   onSuccess: () => void;
 };
 
-function EditBookingDialog({ open, onOpenChange, organizationId, booking, onSuccess }: EditBookingDialogProps) {
+function EditBookingDialog({
+  open,
+  onOpenChange,
+  organizationId,
+  orgTimeZone,
+  booking,
+  onSuccess,
+}: EditBookingDialogProps) {
   const queryClient = useQueryClient();
   const [locationId, setLocationId] = useState(booking?.location_id ?? "");
   const [serviceId, setServiceId] = useState(booking?.service_id ?? "");
@@ -2367,8 +2380,12 @@ function EditBookingDialog({ open, onOpenChange, organizationId, booking, onSucc
   const [customerLastName, setCustomerLastName] = useState(() => parseFullName(booking?.customer_name ?? "").last);
   const [customerEmail, setCustomerEmail] = useState(booking?.customer_email ?? "");
   const [customerPhone, setCustomerPhone] = useState(booking?.customer_phone ?? "");
-  const [startDate, setStartDate] = useState<Date>(() => (booking ? new Date(booking.start_time) : new Date()));
-  const [startTime, setStartTime] = useState(() => (booking ? format(new Date(booking.start_time), "HH:mm") : "09:00"));
+  const [startDate, setStartDate] = useState<Date>(() =>
+    booking ? utcToOrgLocalCalendarDate(booking.start_time, orgTimeZone) : new Date(),
+  );
+  const [startTime, setStartTime] = useState(() =>
+    booking ? formatInOrgTz(booking.start_time, orgTimeZone, "HH:mm") : "09:00",
+  );
   const [notes, setNotes] = useState(booking?.notes ?? "");
   const customerName = [customerFirstName.trim(), customerLastName.trim()].filter(Boolean).join(" ").trim();
 
@@ -2382,11 +2399,11 @@ function EditBookingDialog({ open, onOpenChange, organizationId, booking, onSucc
       setCustomerLastName(last);
       setCustomerEmail(booking.customer_email ?? "");
       setCustomerPhone(booking.customer_phone ?? "");
-      setStartDate(new Date(booking.start_time));
-      setStartTime(format(new Date(booking.start_time), "HH:mm"));
+      setStartDate(utcToOrgLocalCalendarDate(booking.start_time, orgTimeZone));
+      setStartTime(formatInOrgTz(booking.start_time, orgTimeZone, "HH:mm"));
       setNotes(booking.notes ?? "");
     }
-  }, [open, booking]);
+  }, [open, booking, orgTimeZone]);
 
   const { data: locations = [] } = useQuery({
     queryKey: ["locations", organizationId],
@@ -2441,9 +2458,7 @@ function EditBookingDialog({ open, onOpenChange, organizationId, booking, onSucc
 
   const updateMutation = useMutation({
     mutationFn: async () => {
-      const [h, m] = startTime.split(":").map(Number);
-      const start = new Date(startDate);
-      start.setHours(h, m, 0, 0);
+      const start = orgPickerDateAndTimeToUtc(startDate, startTime, orgTimeZone);
       const duration = selectedService?.duration_minutes ?? 30;
       const end = new Date(start.getTime() + duration * 60000);
       const { error } = await supabase
@@ -2498,9 +2513,7 @@ function EditBookingDialog({ open, onOpenChange, organizationId, booking, onSucc
       toast({ title: "Select location and service", variant: "destructive" });
       return;
     }
-    const [h, m] = startTime.split(":").map(Number);
-    const start = new Date(startDate);
-    start.setHours(h, m, 0, 0);
+    const start = orgPickerDateAndTimeToUtc(startDate, startTime, orgTimeZone);
     if (isBefore(start, new Date())) {
       toast({ title: "Start time must be in the future", variant: "destructive" });
       return;
@@ -2508,12 +2521,9 @@ function EditBookingDialog({ open, onOpenChange, organizationId, booking, onSucc
     updateMutation.mutate();
   };
 
-  const todayStart = startOfDay(new Date());
-  const isSelectedToday = startDate && startOfDay(startDate).getTime() === todayStart.getTime();
-  const now = new Date();
-  const minTime = isSelectedToday
-    ? `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`
-    : undefined;
+  const editMinDateYmd = orgDayKey(new Date(), orgTimeZone);
+  const isSelectedToday = startDate && orgDayKey(startDate, orgTimeZone) === orgDayKey(new Date(), orgTimeZone);
+  const minTime = isSelectedToday ? orgNowTimeHhmm(orgTimeZone) : undefined;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -2588,7 +2598,7 @@ function EditBookingDialog({ open, onOpenChange, organizationId, booking, onSucc
               type="date"
               value={format(startDate, "yyyy-MM-dd")}
               onChange={(e) => setStartDate(e.target.value ? new Date(e.target.value) : startDate)}
-              min={format(todayStart, "yyyy-MM-dd")}
+              min={editMinDateYmd}
             />
           </div>
           <div className="grid gap-2">

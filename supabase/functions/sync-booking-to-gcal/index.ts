@@ -104,6 +104,24 @@ Deno.serve(async (req) => {
       gcal_use_staff_secondary_calendars?: boolean | null;
     } | null;
     const orgTz = (orgRow?.timezone && String(orgRow.timezone).trim()) || "Europe/Amsterdam";
+
+    /** Wall clock at the salon (for description — Google UI uses the viewer’s calendar timezone for the block). */
+    function formatSalonLocal(iso: string, timeZone: string): string {
+      try {
+        return new Intl.DateTimeFormat("en-GB", {
+          timeZone,
+          weekday: "short",
+          month: "short",
+          day: "numeric",
+          hour: "numeric",
+          minute: "2-digit",
+          hour12: true,
+        }).format(new Date(iso));
+      } catch {
+        return String(iso);
+      }
+    }
+
     const useStaffLayers = !!orgRow?.gcal_use_staff_secondary_calendars;
     const staffRow = booking.staff as {
       gcal_secondary_calendar_id?: string | null;
@@ -116,11 +134,16 @@ Deno.serve(async (req) => {
     const storedCalId = ((booking as { gcal_calendar_id?: string | null }).gcal_calendar_id ?? "").trim();
     const calendarIdForApi = storedCalId || (secondaryCal || "primary");
 
+    const startIso = String(booking.start_time);
+    const endIso = String(booking.end_time);
+    const salonWhen = `Salon time (${orgTz}): ${formatSalonLocal(startIso, orgTz)} – ${formatSalonLocal(endIso, orgTz)}`;
+
     const gcalEventBody = {
       summary: `${booking.customer_name} — ${(booking.services as any)?.name || "Appointment"}`,
-      description: `Staff: ${(booking.staff as any)?.name || "—"}\nLocation: ${(booking.locations as any)?.name || "—"}\nEmail: ${booking.customer_email}\nPhone: ${booking.customer_phone || "N/A"}\nStatus: ${booking.status}`,
-      start: { dateTime: booking.start_time, timeZone: orgTz },
-      end: { dateTime: booking.end_time, timeZone: orgTz },
+      description: `${salonWhen}\n\nStaff: ${(booking.staff as any)?.name || "—"}\nLocation: ${(booking.locations as any)?.name || "—"}\nEmail: ${booking.customer_email}\nPhone: ${booking.customer_phone || "N/A"}\nStatus: ${booking.status}`,
+      // RFC3339 instant from DB; timeZone is optional when offset is present but helps recurrence tools.
+      start: { dateTime: startIso, timeZone: orgTz },
+      end: { dateTime: endIso, timeZone: orgTz },
       extendedProperties: {
         private: {
           booking_id: booking_id,
