@@ -49,13 +49,13 @@ Deno.serve(async (req) => {
   }
 
   try {
-    let body: { event_id?: string; user_id?: string; organization_id?: string } = {};
+    let body: { event_id?: string; user_id?: string; organization_id?: string; booking_id?: string } = {};
     try {
       body = await req.json();
     } catch {
       body = {};
     }
-    const { event_id, user_id: bodyUserId, organization_id: bodyOrgId } = body;
+    const { event_id, user_id: bodyUserId, organization_id: bodyOrgId, booking_id: bodyBookingId } = body;
 
     if (!event_id) {
       return new Response(JSON.stringify({ error: "event_id is required" }), {
@@ -72,6 +72,18 @@ Deno.serve(async (req) => {
     const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
     let userId = bodyUserId;
+    let gcalCalendarId = "primary";
+    if (!userId && bodyBookingId && /^[0-9a-f-]{36}$/i.test(bodyBookingId)) {
+      const { data: booking } = await supabase
+        .from("bookings")
+        .select("organization_id, organizations(owner_id), gcal_calendar_id")
+        .eq("id", bodyBookingId)
+        .maybeSingle();
+      const ownerId = (booking as { organizations?: { owner_id?: string } } | null)?.organizations?.owner_id ?? null;
+      userId = ownerId ?? null;
+      const cid = ((booking as { gcal_calendar_id?: string | null } | null)?.gcal_calendar_id ?? "").trim();
+      if (cid) gcalCalendarId = cid;
+    }
     if (!userId && bodyOrgId) {
       const { data: org } = await supabase
         .from("organizations")
@@ -96,7 +108,7 @@ Deno.serve(async (req) => {
     }
 
     const deleteRes = await fetch(
-      `https://www.googleapis.com/calendar/v3/calendars/primary/events/${encodeURIComponent(event_id)}`,
+      `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(gcalCalendarId)}/events/${encodeURIComponent(event_id)}`,
       {
         method: "DELETE",
         headers: { Authorization: `Bearer ${accessToken}` },

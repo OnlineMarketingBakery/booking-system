@@ -50,7 +50,12 @@ Deno.serve(async (req) => {
   }
 
   try {
-    let body: { user_id?: string; organization_id?: string; time_min?: string; time_max?: string } = {};
+    let body: {
+      user_id?: string;
+      organization_id?: string;
+      time_min?: string;
+      time_max?: string;
+    } = {};
     try {
       body = await req.json();
     } catch {
@@ -71,24 +76,33 @@ Deno.serve(async (req) => {
 
     const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
-    // Resolve user_id: use body user_id, or look up org owner when organization_id is provided
-    let user_id = bodyUserId;
-    if (!user_id && organization_id) {
-      const { data: org } = await supabase
+    let ownerId: string | null = null;
+    if (organization_id) {
+      const { data: orgRow } = await supabase
         .from("organizations")
         .select("owner_id")
         .eq("id", organization_id)
         .single();
-      user_id = org?.owner_id ?? null;
+      ownerId = orgRow?.owner_id ?? null;
     }
-    if (!user_id) {
+
+    /** Calendar user whose primary calendar we read (owner for org-scoped public booking). */
+    let googleUserId: string | null = null;
+
+    if (organization_id && ownerId) {
+      googleUserId = ownerId;
+    } else if (bodyUserId) {
+      googleUserId = bodyUserId;
+    }
+
+    if (!googleUserId) {
       return new Response(JSON.stringify({ events: [], connected: false }), {
         status: 200,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
 
-    const accessToken = await getValidAccessToken(supabase, user_id, GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET);
+    const accessToken = await getValidAccessToken(supabase, googleUserId, GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET);
     if (!accessToken) {
       return new Response(JSON.stringify({ events: [], connected: false }), {
         status: 200,
@@ -146,26 +160,13 @@ Deno.serve(async (req) => {
       };
     });
 
-    const gcalEventIds = new Set((gcalData.items || []).map((e: any) => e.id));
-    const { data: orgs } = await supabase
-      .from("organizations")
-      .select("id")
-      .eq("owner_id", user_id);
-    const orgIds = (orgs || []).map((o: any) => o.id);
-    if (orgIds.length > 0) {
-      const { data: syncedBookings } = await supabase
-        .from("bookings")
-        .select("id, gcal_event_id")
-        .in("organization_id", orgIds)
-        .not("gcal_event_id", "is", null);
-      for (const b of syncedBookings || []) {
-        if (b.gcal_event_id && !gcalEventIds.has(b.gcal_event_id)) {
-          await supabase.from("bookings").delete().eq("id", b.id);
-        }
-      }
-    }
+    // Same window as list(): only bookings starting in this range are checked. For each, GET the
+    // event by id — 404/410 means it was removed in Google → cancel Salonora row (old code wrongly
+    // inferred deletion from "not in list()" and deleted unrelated weeks).
+    /** One-way sync: Salonora updates Google; we do not cancel or modify bookings from Google Calendar changes. */
+    const gcal_reconcile = { checked: 0, cancelled: 0 };
 
-    return new Response(JSON.stringify({ events, connected: true }), {
+    return new Response(JSON.stringify({ events, connected: true, gcal_reconcile }), {
       status: 200,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });

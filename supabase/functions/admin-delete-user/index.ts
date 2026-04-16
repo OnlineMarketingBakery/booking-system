@@ -1,4 +1,5 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { deleteOrganizationScopedData } from "../_shared/deleteOrganizationScopedData.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -81,7 +82,33 @@ Deno.serve(async (req) => {
       });
     }
 
-    // Delete from app_users, profiles, user_roles, and related data
+    // Organizations no longer FK-cascade from app_users (custom auth). Remove tenant data first.
+    const { data: ownedOrgs, error: orgListErr } = await adminClient
+      .from("organizations")
+      .select("id")
+      .eq("owner_id", user_id);
+    if (orgListErr) {
+      return new Response(JSON.stringify({ error: orgListErr.message }), {
+        status: 500,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+    for (const row of ownedOrgs ?? []) {
+      const orgId = row.id as string;
+      await deleteOrganizationScopedData(adminClient, orgId);
+      const { error: delOrgErr } = await adminClient.from("organizations").delete().eq("id", orgId);
+      if (delOrgErr) {
+        return new Response(JSON.stringify({ error: delOrgErr.message }), {
+          status: 500,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+    }
+
+    // Unlink this login from any staff row (e.g. invited stylist at another salon)
+    await adminClient.from("staff").update({ user_id: null }).eq("user_id", user_id);
+
+    await adminClient.from("google_calendar_tokens").delete().eq("user_id", user_id);
     await adminClient.from("user_roles").delete().eq("user_id", user_id);
     await adminClient.from("profiles").delete().eq("id", user_id);
     await adminClient.from("app_users").delete().eq("id", user_id);

@@ -7,11 +7,9 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { ChartContainer, ChartTooltip, ChartTooltipContent } from "@/components/ui/chart";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { PieChart, Pie, Cell } from "recharts";
 import { useToast } from "@/hooks/use-toast";
-import { Loader2, Users, Building2, CalendarDays, Shield, Trash2, UserPlus, Check, X } from "lucide-react";
+import { Loader2, Users, Building2, CalendarDays, Shield, Trash2, UserPlus, Check, X, ShoppingBag, Layers } from "lucide-react";
 import { format } from "date-fns";
 import {
   AlertDialog,
@@ -25,15 +23,7 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import SuperAdminAccounts from "./SuperAdminAccounts";
-
-const COLORS = [
-  "hsl(262, 83%, 58%)",
-  "hsl(152, 69%, 40%)",
-  "hsl(38, 92%, 50%)",
-  "hsl(0, 84%, 60%)",
-  "hsl(200, 70%, 50%)",
-  "hsl(320, 70%, 50%)",
-];
+import SuperAdminPlanDefinitions from "./SuperAdminPlanDefinitions";
 
 type AppRole = "super_admin" | "salon_owner" | "staff" | "customer";
 
@@ -89,6 +79,51 @@ export default function SuperAdminDashboard() {
     onError: (err: any) => {
       toast({ title: "Failed to approve", description: err?.message, variant: "destructive" });
       setApprovingId(null);
+    },
+  });
+
+  const provisionPlugnpayBuyers = useMutation({
+    mutationFn: async () => {
+      const data = (await invokeFunction("plugnpay-provision-accounts", {})) as {
+        error?: string;
+        created?: { email: string; user_id: string }[];
+        skipped_existing_count?: number;
+        errors?: string[];
+        subscriptions_scanned?: number;
+      };
+      if (data?.error) throw new Error(data.error);
+      return data;
+    },
+    onSuccess: (data: {
+      created?: { email: string; user_id: string }[];
+      skipped_existing_count?: number;
+      errors?: string[];
+      subscriptions_scanned?: number;
+    }) => {
+      queryClient.invalidateQueries({ queryKey: ["admin-users"] });
+      queryClient.invalidateQueries({ queryKey: ["admin-platform-stats"] });
+      queryClient.invalidateQueries({ queryKey: ["admin-salon-owners"] });
+      const created = data?.created?.length ?? 0;
+      const skipped = data?.skipped_existing_count ?? 0;
+      toast({
+        title: "Plug&Pay sync finished",
+        description: `New accounts: ${created}. Already in Salonora: ${skipped}. Active subscriptions scanned: ${data?.subscriptions_scanned ?? "—"}.`,
+      });
+      if (data?.errors?.length) {
+        console.warn("[plugnpay-provision-accounts]", data.errors);
+        toast({
+          title: "Some steps reported issues",
+          description: "Open the browser console for details (for example email delivery).",
+          variant: "destructive",
+        });
+      }
+    },
+    onError: (err: unknown) => {
+      toast({
+        title: "Plug&Pay sync failed",
+        description: err instanceof Error ? err.message : "Request failed",
+        variant: "destructive",
+      });
     },
   });
 
@@ -160,7 +195,7 @@ export default function SuperAdminDashboard() {
     queryKey: ["admin-platform-stats", approvedUserIds],
     queryFn: async () => {
       if (approvedUserIds.length === 0) {
-        return { totalUsers: 0, totalOrgs: 0, totalBookings: 0, totalStaff: 0, statusData: [] };
+        return { totalUsers: 0, totalOrgs: 0, totalBookings: 0, totalStaff: 0 };
       }
       const approvedSet = new Set(approvedUserIds);
       const [profilesRes, rolesRes, orgsRes, staffRes] = await Promise.all([
@@ -190,20 +225,15 @@ export default function SuperAdminDashboard() {
         .map((org) => org.id);
       const activeOrgSet = new Set(activeOrgIds);
 
-      const { data: bookingsData = [], count: bookingsCount = 0, error: bookingsErr } =
+      const { count: bookingsCount = 0, error: bookingsErr } =
         activeOrgIds.length > 0
           ? await supabase
               .from("bookings")
-              .select("status, organization_id", { count: "exact" })
+              .select("id", { count: "exact", head: true })
               .in("organization_id", activeOrgIds)
-          : { data: [], count: 0, error: null as any };
+          : { count: 0, error: null as null };
 
       if (bookingsErr) throw bookingsErr;
-
-      const statusMap = new Map<string, number>();
-      for (const b of bookingsData) {
-        statusMap.set(b.status, (statusMap.get(b.status) || 0) + 1);
-      }
 
       const totalStaff = (staffRes.data || []).filter((s) => activeOrgSet.has(s.organization_id)).length;
 
@@ -214,7 +244,6 @@ export default function SuperAdminDashboard() {
         totalOrgs: activeOrgIds.length,
         totalBookings: bookingsCount ?? 0,
         totalStaff,
-        statusData: Array.from(statusMap, ([name, value]) => ({ name, value })),
       };
     },
   });
@@ -254,6 +283,8 @@ export default function SuperAdminDashboard() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["admin-users"] });
       queryClient.invalidateQueries({ queryKey: ["admin-platform-stats"] });
+      queryClient.invalidateQueries({ queryKey: ["admin-salons"] });
+      queryClient.invalidateQueries({ queryKey: ["admin-salon-owners"] });
       toast({ title: "User deleted" });
       setDeletingId(null);
     },
@@ -290,9 +321,39 @@ export default function SuperAdminDashboard() {
         <TabsList>
           <TabsTrigger value="overview">Overview</TabsTrigger>
           <TabsTrigger value="accounts">Salons</TabsTrigger>
+          <TabsTrigger value="plans" className="gap-1.5">
+            <Layers className="h-3.5 w-3.5" />
+            Plans
+          </TabsTrigger>
         </TabsList>
 
         <TabsContent value="overview" className="space-y-6 mt-4">
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2 text-base">
+                <ShoppingBag className="h-4 w-4" />
+                Plug&Pay buyers → Salonora accounts
+              </CardTitle>
+              <p className="text-sm text-muted-foreground">
+                Fetches active live subscriptions from Plug&Pay, then creates an approved salon-owner account for each billing email that is not already in Salonora (and matches your allowed product ids, if configured). New users get an email with a link to choose their own password, then they are signed in.
+              </p>
+            </CardHeader>
+            <CardContent>
+              <Button
+                type="button"
+                onClick={() => provisionPlugnpayBuyers.mutate()}
+                disabled={provisionPlugnpayBuyers.isPending}
+              >
+                {provisionPlugnpayBuyers.isPending ? (
+                  <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                ) : (
+                  <ShoppingBag className="h-4 w-4 mr-2" />
+                )}
+                Run sync now
+              </Button>
+            </CardContent>
+          </Card>
+
           {/* Pending signups */}
           {pendingSignups.length > 0 && (
             <Card className="border-primary/30">
@@ -365,27 +426,6 @@ export default function SuperAdminDashboard() {
               </Card>
             ))}
           </div>
-
-          {/* Booking Status Chart */}
-          {platformStats?.statusData && platformStats.statusData.length > 0 && (
-            <Card>
-              <CardHeader>
-                <CardTitle className="text-base">Platform-Wide Booking Status</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <ChartContainer config={{ value: { label: "Bookings" } }} className="h-[220px] w-full">
-                  <PieChart>
-                    <Pie data={platformStats.statusData} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius="70%" label={({ name }) => name}>
-                      {platformStats.statusData.map((_, i) => (
-                        <Cell key={i} fill={COLORS[i % COLORS.length]} />
-                      ))}
-                    </Pie>
-                    <ChartTooltip content={<ChartTooltipContent nameKey="name" />} />
-                  </PieChart>
-                </ChartContainer>
-              </CardContent>
-            </Card>
-          )}
 
           {/* Users Table */}
           <Card>
@@ -479,6 +519,10 @@ export default function SuperAdminDashboard() {
 
         <TabsContent value="accounts" className="mt-4">
           <SuperAdminAccounts />
+        </TabsContent>
+
+        <TabsContent value="plans" className="mt-4">
+          <SuperAdminPlanDefinitions />
         </TabsContent>
       </Tabs>
     </div>

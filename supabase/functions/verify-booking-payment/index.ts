@@ -29,7 +29,7 @@ serve(async (req) => {
 
     const { data: booking } = await supabaseClient
       .from("bookings")
-      .select("*, staff(name), services(name, duration_minutes, price, currency), locations(name, address), organizations(name)")
+      .select("*, staff(name), services(name, duration_minutes, price, currency), locations(name, address), organizations(name, slug)")
       .eq("id", booking_id)
       .single();
 

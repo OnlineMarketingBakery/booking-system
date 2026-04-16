@@ -3,6 +3,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useOrganization } from "@/hooks/useOrganization";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
+import { getErrorMessage } from "@/lib/errorMessage";
 import { MapPin, Loader2 } from "lucide-react";
 
 interface StaffLocationAssignmentProps {
@@ -56,7 +57,8 @@ export function StaffLocationAssignment({ staffId }: StaffLocationAssignmentProp
       queryClient.invalidateQueries({ queryKey: ["staff-locations", staffId] });
       toast({ title: "Location updated" });
     },
-    onError: (err: any) => toast({ title: "Error", description: err.message, variant: "destructive" }),
+    onError: (err: unknown) =>
+      toast({ title: "Error", description: getErrorMessage(err, "Could not update location."), variant: "destructive" }),
   });
 
   const removeLocation = useMutation({
@@ -68,7 +70,8 @@ export function StaffLocationAssignment({ staffId }: StaffLocationAssignmentProp
       queryClient.invalidateQueries({ queryKey: ["staff-locations", staffId] });
       toast({ title: "Location removed" });
     },
-    onError: (err: any) => toast({ title: "Error", description: err.message, variant: "destructive" }),
+    onError: (err: unknown) =>
+      toast({ title: "Error", description: getErrorMessage(err, "Could not remove location."), variant: "destructive" }),
   });
 
   const isPending = assignOrChangeLocation.isPending || removeLocation.isPending;

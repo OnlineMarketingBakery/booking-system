@@ -14,13 +14,6 @@ import {
   CardDescription,
 } from "@/components/ui/card";
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
@@ -52,10 +45,54 @@ import { Day } from "react-day-picker";
 import { DEFAULT_EMBED_THEME, hexToHsl, hexToHslWithAlpha, hexToRgba, getContrastingTextColors } from "@/types/embedTheme";
 import type { EmbedTheme } from "@/types/embedTheme";
 import { getHolidayDatesForYears, getHolidaysWithNames } from "@/lib/holidays";
-import { isSlotAvailableForBooking, type SlotStartRow } from "@/lib/slotStartCapacity";
+import {
+  isWallIntervalAvailableForBooking,
+  wallIntervalsOverlap,
+  type OccupancyRow,
+} from "@/lib/slotStartCapacity";
+import { BOOKING_SLOT_GRID_MINUTES } from "@/lib/bookingSlotConstants";
+import { getErrorMessage } from "@/lib/errorMessage";
+import { AddToCalendarButtons } from "@/components/AddToCalendarButtons";
+import type { CalendarEventInput } from "@/lib/calendarLinks";
 
-/** Minutes of buffer required between consecutive bookings; next slot can only start after this after the previous end. */
-const BOOKING_SLOT_BUFFER_MINUTES = 15;
+const WIDGET_BOOKING_CAL_KEY = "salonora_widget_booking_cal_v1";
+
+function persistWidgetBookingCal(payload: {
+  title: string;
+  description?: string;
+  location?: string;
+  start: string;
+  end: string;
+}) {
+  try {
+    sessionStorage.setItem(WIDGET_BOOKING_CAL_KEY, JSON.stringify(payload));
+  } catch {
+    // ignore
+  }
+}
+
+function readStoredWidgetCal(): CalendarEventInput | null {
+  try {
+    const raw = sessionStorage.getItem(WIDGET_BOOKING_CAL_KEY);
+    if (!raw) return null;
+    const j = JSON.parse(raw) as {
+      title: string;
+      description?: string;
+      location?: string;
+      start: string;
+      end: string;
+    };
+    return {
+      title: j.title,
+      description: j.description,
+      location: j.location,
+      start: new Date(j.start),
+      end: new Date(j.end),
+    };
+  } catch {
+    return null;
+  }
+}
 
 function eligibleStaffIdsForWallSlot(
   activeStaffAtLocation: Set<string>,
@@ -107,11 +144,11 @@ export default function BookingPage() {
   const { slug } = useParams<{ slug: string }>();
   const [searchParams] = useSearchParams();
   const { toast } = useToast();
-  const { validateSpamProtection, SpamProtectionFieldsProps } = useSpamProtection();
+  /** Public widget: honeypot only — avoid a minimum delay that blocks fast legitimate checkouts. */
+  const { validateSpamProtection, SpamProtectionFieldsProps } = useSpamProtection({ minSeconds: 0 });
   const [step, setStep] = useState<Step>("location");
   const [selectedLocation, setSelectedLocation] = useState<string>("");
   const [selectedServices, setSelectedServices] = useState<string[]>([]);
-  const [selectedStaff, setSelectedStaff] = useState<string>("");
   const [selectedTime, setSelectedTime] = useState<string>("");
   const [selectedDate, setSelectedDate] = useState<string>(
     format(new Date(), "yyyy-MM-dd"),
@@ -148,7 +185,7 @@ export default function BookingPage() {
     queryFn: async () => {
       const { data, error } = await supabase
         .from("organizations_public")
-        .select("id, name, slug, logo_url, embed_theme, holiday_region")
+        .select("id, name, slug, logo_url, embed_theme, holiday_region, owner_default_staff_id")
         .eq("slug", slug)
         .maybeSingle();
       if (error) throw error;
@@ -293,28 +330,6 @@ export default function BookingPage() {
   };
   const getCurrencySymbol = (code: string) => CURRENCY_SYMBOLS[code?.toLowerCase()] ?? code?.toUpperCase() ?? "€";
 
-  const { data: staffList = [] } = useQuery({
-    queryKey: ["booking-staff", selectedLocation],
-    queryFn: async () => {
-      const { data: staffLocations, error } = await supabase
-        .from("staff_locations")
-        .select("staff_id")
-        .eq("location_id", selectedLocation);
-      if (error) throw error;
-      const staffIds = staffLocations?.map((sl) => sl.staff_id) || [];
-      if (staffIds.length === 0) return [];
-
-      const { data: staffData, error: staffError } = await supabase
-        .from("staff_public")
-        .select("id, name")
-        .in("id", staffIds)
-        .eq("is_active", true);
-      if (staffError) throw staffError;
-      return staffData || [];
-    },
-    enabled: !!selectedLocation,
-  });
-
   // Calculate total duration from selected services
   const selectedServiceObjects = services.filter((s) =>
     selectedServices.includes(s.id),
@@ -357,8 +372,21 @@ export default function BookingPage() {
     };
   }, [locationAvailDays, offDayReasonMap, holidayDatesSet, holidayWorkingOverrideSet, holidayNameMap]);
 
+  const ownerDefaultStaffId =
+    (org as { owner_default_staff_id?: string | null } | null)?.owner_default_staff_id ?? null;
+
   const { data: timeSlots = [] } = useQuery({
-    queryKey: ["booking-slots", selectedLocation, selectedStaff, selectedDate, selectedServices, holidayOverrides, offDaysList, adminRegion],
+    queryKey: [
+      "booking-slots",
+      org?.id,
+      ownerDefaultStaffId,
+      selectedLocation,
+      selectedDate,
+      selectedServices,
+      holidayOverrides,
+      offDaysList,
+      adminRegion,
+    ],
     queryFn: async () => {
       const dateStr = selectedDate;
       if (offDaysSet.has(dateStr)) return [];
@@ -435,7 +463,7 @@ export default function BookingPage() {
       const dayEnd = new Date(selectedDate + "T23:59:59").toISOString();
 
       const { data: slotRows, error: slotErr } = await supabase.rpc(
-        "get_location_slot_start_bookings",
+        "get_location_booking_occupancy",
         {
           p_location_id: selectedLocation,
           p_range_start: dayStart,
@@ -444,32 +472,27 @@ export default function BookingPage() {
         },
       );
       if (slotErr) {
-        console.error("[booking-slots] get_location_slot_start_bookings:", slotErr);
+        console.error("[booking-slots] get_location_booking_occupancy:", slotErr);
       }
-      const slotStartRows: SlotStartRow[] = (slotRows ?? []) as SlotStartRow[];
+      const occupancyRows: OccupancyRow[] = (slotRows ?? []) as OccupancyRow[];
 
       let gcalEvents: { start: string; end: string }[] = [];
-      if (selectedStaff) {
-        try {
-          const { data: gcalData } = await supabase.functions.invoke(
-            "fetch-gcal-events",
-            {
-              body: {
-                organization_id: org!.id,
-                time_min: dayStart,
-                time_max: dayEnd,
-              },
-            },
-          );
-          if (gcalData?.events) {
-            gcalEvents = gcalData.events.map((e: { start: string; end: string }) => ({
-              start: e.start,
-              end: e.end,
-            }));
-          }
-        } catch {
-          // Silently ignore gcal fetch errors for public booking
+      try {
+        const { data: gcalData } = await supabase.functions.invoke("fetch-gcal-events", {
+          body: {
+            organization_id: org!.id,
+            time_min: dayStart,
+            time_max: dayEnd,
+          },
+        });
+        if (gcalData?.events) {
+          gcalEvents = gcalData.events.map((e: { start: string; end: string }) => ({
+            start: e.start,
+            end: e.end,
+          }));
         }
+      } catch {
+        // Silently ignore gcal fetch errors for public booking
       }
 
       const duration = totalDuration || 30;
@@ -487,43 +510,53 @@ export default function BookingPage() {
           em,
         );
 
-        while (
-          isBefore(addMinutes(current, duration), end) ||
-          format(addMinutes(current, duration), "HH:mm") ===
-            format(end, "HH:mm")
-        ) {
+        while (isBefore(current, end)) {
           const slotEnd = addMinutes(current, duration);
+          const fitsInWindow =
+            isBefore(slotEnd, end) || format(slotEnd, "HH:mm") === format(end, "HH:mm");
+          if (!fitsInWindow) {
+            current = addMinutes(current, BOOKING_SLOT_GRID_MINUTES);
+            continue;
+          }
           const isPast = !isAfter(current, new Date());
           const slotWallStart = current;
           const slotWallEnd = slotEnd;
-          const eligibleForSlot = eligibleStaffIdsForWallSlot(
+          const breakFilteredReal = eligibleStaffIdsForWallSlot(
             activeStaffAtLocation,
             staffOnlyBreaks,
             dateStr,
             slotWallStart,
             slotWallEnd,
           );
-          const hasEligibleStaffForSlot = selectedStaff
-            ? eligibleForSlot.includes(selectedStaff)
-            : activeStaffAtLocation.size === 0
-              ? true
-              : eligibleForSlot.length > 0;
+          const eligibleForSlot =
+            activeStaffAtLocation.size > 0
+              ? breakFilteredReal
+              : ownerDefaultStaffId
+                ? [ownerDefaultStaffId]
+                : [];
+          const hasEligibleStaffForSlot = eligibleForSlot.length > 0;
 
+          const intervalStartMs = current.getTime();
+          const intervalEndMs = slotEnd.getTime();
           const bookingConflict =
             !hasEligibleStaffForSlot ||
-            !isSlotAvailableForBooking({
-              rows: slotStartRows,
-              slotStartMs: current.getTime(),
-              eligibleStaffCount: eligibleForSlot.length,
-              locationHasNoStaff: activeStaffAtLocation.size === 0,
-              requestedStaffId: selectedStaff || null,
+            !isWallIntervalAvailableForBooking({
+              rows: occupancyRows,
+              intervalStartMs,
+              intervalEndMs,
+              eligibleStaffIds: eligibleForSlot,
+              locationHasNoStaff: activeStaffAtLocation.size === 0 && !ownerDefaultStaffId,
+              requestedStaffId: null,
             });
-          const gcalConflict = gcalEvents.some((e) => {
-            const es = new Date(e.start);
-            const ee = new Date(e.end);
-            const eeWithBuffer = addMinutes(ee, BOOKING_SLOT_BUFFER_MINUTES);
-            return isBefore(current, eeWithBuffer) && isAfter(slotEnd, es);
-          });
+          // Owner primary calendar reflects one person's busy time — do not hide pooled slots for other stylists.
+          const useGlobalGcalBlock = activeStaffAtLocation.size <= 1;
+          const gcalConflict =
+            useGlobalGcalBlock &&
+            gcalEvents.some((e) => {
+              const es = new Date(e.start).getTime();
+              const ee = new Date(e.end).getTime();
+              return wallIntervalsOverlap(intervalStartMs, intervalEndMs, es, ee);
+            });
           const wallOverlapBreak = (bStart: string, bEnd: string) => {
             const bs = new Date(`${dateStr}T${bStart.slice(0, 5)}:00`);
             const be = new Date(`${dateStr}T${bEnd.slice(0, 5)}:00`);
@@ -547,7 +580,7 @@ export default function BookingPage() {
               available: !bookingConflict && !gcalConflict && staffBreakAllowsSlot,
             });
           }
-          current = addMinutes(current, duration + BOOKING_SLOT_BUFFER_MINUTES);
+          current = addMinutes(current, BOOKING_SLOT_GRID_MINUTES);
         }
       }
       return slots;
@@ -597,7 +630,6 @@ export default function BookingPage() {
           body: {
             organization_id: org!.id,
             location_id: selectedLocation,
-            ...(selectedStaff ? { staff_id: selectedStaff } : {}),
             service_ids: selectedServices,
             customer_name: fullName,
             customer_email: (customerEmail || ((form.get("email") as string)?.trim() ?? "")).trim() || "",
@@ -615,7 +647,7 @@ export default function BookingPage() {
         const d = data as { error?: string } | null | undefined;
         toast({
           title: "Boeking mislukt",
-          description: d?.error?.trim() || error.message,
+          description: d?.error?.trim() || getErrorMessage(error, "Request failed."),
           variant: "destructive",
         });
         return;
@@ -637,6 +669,21 @@ export default function BookingPage() {
             // ignore
           }
         }
+        const totalMin = selectedServiceObjects.reduce(
+          (sum, s) => sum + (Number(s.duration_minutes) || 30),
+          0,
+        );
+        const loc = locations.find((l) => l.id === selectedLocation);
+        persistWidgetBookingCal({
+          title: `${(org as { name?: string })?.name ?? "Salon"}: ${selectedServiceObjects.map((s) => s.name).join(", ")} (pending email confirmation)`,
+          description:
+            "Confirm your appointment using the link we sent to your email. This calendar entry is tentative until you confirm.",
+          location: loc
+            ? `${loc.name}${(loc as { address?: string | null }).address ? `, ${(loc as { address?: string | null }).address}` : ""}`
+            : undefined,
+          start: startTime.toISOString(),
+          end: addMinutes(startTime, totalMin).toISOString(),
+        });
         setStep("confirm_email_sent");
         return;
       }
@@ -657,6 +704,20 @@ export default function BookingPage() {
             // ignore
           }
         }
+        const totalMin = selectedServiceObjects.reduce(
+          (sum, s) => sum + (Number(s.duration_minutes) || 30),
+          0,
+        );
+        const loc = locations.find((l) => l.id === selectedLocation);
+        persistWidgetBookingCal({
+          title: `${(org as { name?: string })?.name ?? "Salon"}: ${selectedServiceObjects.map((s) => s.name).join(", ")}`,
+          description: "Your appointment is confirmed.",
+          location: loc
+            ? `${loc.name}${(loc as { address?: string | null }).address ? `, ${(loc as { address?: string | null }).address}` : ""}`
+            : undefined,
+          start: startTime.toISOString(),
+          end: addMinutes(startTime, totalMin).toISOString(),
+        });
         setStep("confirmed");
         return;
       }
@@ -679,10 +740,10 @@ export default function BookingPage() {
         }
         window.location.href = data.url;
       }
-    } catch (err: any) {
+    } catch (err: unknown) {
       toast({
         title: "Booking failed",
-        description: err.message,
+        description: getErrorMessage(err, "Something went wrong."),
         variant: "destructive",
       });
     } finally {
@@ -723,17 +784,57 @@ export default function BookingPage() {
   }
 
   if (step === "confirmed") {
+    const cal = readStoredWidgetCal();
+    const summaryLine =
+      cal?.title?.includes(": ") ? cal.title.split(": ").slice(1).join(": ") : cal?.title ?? "Appointment";
     return (
-      <div className="flex min-h-screen items-center justify-center bg-muted/30 px-4">
-        <Card className="w-full max-w-md text-center">
-          <CardContent className="py-12 space-y-4">
-            <CheckCircle2 className="mx-auto h-16 w-16 text-primary" />
-            <h2 className="text-2xl font-bold">Booking Confirmed!</h2>
-            <p className="text-muted-foreground">
-              You'll receive a confirmation email shortly.
-            </p>
-            <Button onClick={()=>window.location.reload()}>Go Back To Booking Page
-            </Button>
+      <div className="flex min-h-screen items-center justify-center bg-muted/30 px-4 py-8">
+        <Card className="w-full max-w-lg border-primary/15 shadow-sm">
+          <CardContent className="space-y-6 py-10 px-6 sm:px-10">
+            <div className="flex flex-col items-center gap-3 text-center sm:flex-row sm:text-left">
+              <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-full bg-primary/10">
+                <CheckCircle2 className="h-8 w-8 text-primary" />
+              </div>
+              <div>
+                <h2 className="text-2xl font-bold tracking-tight">See you soon!</h2>
+                <p className="text-muted-foreground text-sm">
+                  Your appointment is confirmed. You will also receive a confirmation email with calendar links.
+                </p>
+              </div>
+            </div>
+            {cal ? (
+              <div className="rounded-xl border bg-muted/40 p-4 sm:p-5">
+                <div className="grid gap-4 sm:grid-cols-2 sm:divide-x sm:divide-border">
+                  <div className="space-y-1 text-center sm:pr-4 sm:text-left">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">When</p>
+                    <p className="text-lg font-semibold">{format(cal.start, "MMMM d")}</p>
+                    <p className="text-sm text-muted-foreground">{format(cal.start, "EEEE")}</p>
+                    <p className="flex items-center justify-center gap-1.5 text-sm text-muted-foreground sm:justify-start">
+                      <Clock className="h-4 w-4 shrink-0" />
+                      {format(cal.start, "HH:mm")}
+                      {" – "}
+                      {format(cal.end, "HH:mm")}
+                    </p>
+                  </div>
+                  <div className="space-y-1 text-center sm:pl-4 sm:text-left">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Details</p>
+                    <p className="font-medium leading-snug">{summaryLine}</p>
+                    {cal.location ? (
+                      <p className="flex items-start justify-center gap-1.5 text-sm text-muted-foreground sm:justify-start">
+                        <MapPin className="mt-0.5 h-4 w-4 shrink-0" />
+                        {cal.location}
+                      </p>
+                    ) : null}
+                  </div>
+                </div>
+              </div>
+            ) : null}
+            {cal ? <AddToCalendarButtons event={cal} icsFileName="salon-appointment" /> : null}
+            <div className="flex justify-center">
+              <Button variant="outline" className="min-w-[200px]" onClick={() => window.location.reload()}>
+                Book another appointment
+              </Button>
+            </div>
           </CardContent>
         </Card>
       </div>
@@ -741,15 +842,61 @@ export default function BookingPage() {
   }
 
   if (step === "confirm_email_sent") {
+    const cal = readStoredWidgetCal();
+    const summaryLine =
+      cal?.title?.includes(": ") ? cal.title.split(": ").slice(1).join(": ") : cal?.title ?? "Requested appointment";
     return (
-      <div className="flex min-h-screen items-center justify-center bg-muted/30 px-4">
-        <Card className="w-full max-w-md text-center">
-          <CardContent className="py-12 space-y-4">
-            <Calendar className="mx-auto h-16 w-16 text-primary" />
-            <h2 className="text-2xl font-bold">Check your email</h2>
-            <p className="text-muted-foreground">
-              We've sent you a link to confirm your booking. Click the link in the email to complete your appointment. The link expires in 24 hours.
-            </p>
+      <div className="flex min-h-screen items-center justify-center bg-muted/30 px-4 py-8">
+        <Card className="w-full max-w-lg border-primary/15 shadow-sm">
+          <CardContent className="space-y-6 py-10 px-6 sm:px-10">
+            <div className="flex flex-col items-center gap-3 text-center">
+              <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-full bg-primary/10">
+                <Calendar className="h-8 w-8 text-primary" />
+              </div>
+              <h2 className="text-2xl font-bold tracking-tight">Check your email</h2>
+              <p className="text-muted-foreground text-sm max-w-md">
+                We have sent you a link to confirm your booking. Open the email and tap the button to complete your
+                appointment. The link expires in 24 hours. Your confirmation email will include calendar options again
+                once you confirm.
+              </p>
+            </div>
+            {cal ? (
+              <>
+                <div className="rounded-xl border border-dashed bg-muted/30 p-4 sm:p-5">
+                  <p className="mb-3 text-center text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                    Requested time (tentative)
+                  </p>
+                  <div className="grid gap-4 sm:grid-cols-2 sm:divide-x sm:divide-border">
+                    <div className="space-y-1 text-center sm:pr-4 sm:text-left">
+                      <p className="text-lg font-semibold">{format(cal.start, "MMMM d")}</p>
+                      <p className="text-sm text-muted-foreground">{format(cal.start, "EEEE")}</p>
+                      <p className="flex items-center justify-center gap-1.5 text-sm text-muted-foreground sm:justify-start">
+                        <Clock className="h-4 w-4 shrink-0" />
+                        {format(cal.start, "HH:mm")} – {format(cal.end, "HH:mm")}
+                      </p>
+                    </div>
+                    <div className="space-y-1 text-center sm:pl-4 sm:text-left">
+                      <p className="font-medium leading-snug">{summaryLine}</p>
+                      {cal.location ? (
+                        <p className="flex items-start justify-center gap-1.5 text-sm text-muted-foreground sm:justify-start">
+                          <MapPin className="mt-0.5 h-4 w-4 shrink-0" />
+                          {cal.location}
+                        </p>
+                      ) : null}
+                    </div>
+                  </div>
+                </div>
+                <AddToCalendarButtons event={cal} icsFileName="salon-appointment-tentative" />
+                <p className="text-center text-xs text-muted-foreground">
+                  Optional reminder — your slot is held until you confirm by email.
+                </p>
+              </>
+            ) : null}
+            <div className="flex justify-center">
+              <Button variant="outline" onClick={() => window.location.reload()}>
+                Back to booking
+              </Button>
+            </div>
           </CardContent>
         </Card>
       </div>
@@ -1067,6 +1214,9 @@ export default function BookingPage() {
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
+                <p className="text-sm text-muted-foreground max-w-md">
+                  We tonen gecombineerde tijden. Een beschikbare medewerker wordt automatisch toegewezen.
+                </p>
                 <div className="flex flex-col sm:flex-row gap-4">
                   {/* Left column: Calendar */}
                   <div className="shrink-0">

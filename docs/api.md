@@ -104,6 +104,10 @@ These functions support OAuth, event sync, and event fetching:
 - `disconnect-gcal` (verify_jwt=false) — disconnect integration (token state tracking + log).
 - `backfill-bookings-to-gcal` (verify_jwt=false) — create events for historic bookings.
 
+### Plug&Pay provisioning (SaaS buyers → Salonora accounts)
+- **`plugnpay-provision-accounts`** (`verify_jwt=false`) — Super-admin JWT or `X-Plugnpay-Cron-Secret`; lists Plug&Pay **`v2/subscriptions`** only (paginated, `mode=live`, `status=active`, includes `billing,product,…`) and provisions missing billing emails (welcome email with “create password” link). Optional **`PLUGNPAY_PROVISION_PRODUCT_IDS`**: if set, the subscription’s `product_id` / `product.id` must match or that row is skipped. Needs **`PLUGNPAY_API_KEY`** and `_shared/plugnpay-provision-buyer.ts`. **Does not call the orders API.**
+- **`plugnpay-order-webhook`** (`verify_jwt=false`) — Legacy URL name; **subscription webhooks only.** `POST` JSON from Plug&Pay. Authenticate with query `?secret=` and/or header `X-Salonora-Webhook-Secret` matching **`PLUGNPAY_WEBHOOK_SECRET`**. Parses a subscription from the body (`subscription`, `data.subscription`, `resource_type: subscription`, or `data` with `billing` + `product` and no order line items). Optional **`PLUGNPAY_PROVISION_PRODUCT_IDS`** on `product_id` / `product.id`. Hydrates only **`v2/subscriptions/{id}`** via **`PLUGNPAY_API_KEY`** when needed. **`provisionSalonOwnerFromPlugnpayContact`** skips emails already in `app_users`. If the body is not subscription-shaped, returns **`not_subscription_payload`** (still **200**). **Does not call the orders API.**
+
 ## SaaS administration functions (super admin)
 Used by the super admin dashboard to manage users and tenant accounts:
 - `get-pending-signups` (verify_jwt=false) — list users awaiting approval.

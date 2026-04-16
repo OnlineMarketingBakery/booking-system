@@ -1,6 +1,7 @@
 import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import { Resend } from "npm:resend@2.0.0";
 import { createClient } from "npm:@supabase/supabase-js@2.57.2";
+import { buildIcsContent, googleCalendarUrl } from "../_shared/calendarIcs.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -73,9 +74,45 @@ serve(async (req) => {
         service_summary,
         confirm_url,
         release_hold_url,
+        start_iso,
+        end_iso,
+        location_label,
       } = confirm_booking || {};
       if (!token || !customer_email || !confirm_url) throw new Error("confirm_booking requires token, customer_email, confirm_url");
       const subject = `Bevestig je reservering — ${org_name || "Je salon"}`;
+      const tentativeTitle = `${org_name || "Afspraak"}: ${service_summary || "Reservering"} (wacht op bevestiging)`;
+      let calendarBlock = "";
+      const confirmAttachments: { filename: string; content: string }[] = [];
+      if (typeof start_iso === "string" && typeof end_iso === "string" && start_iso && end_iso) {
+        const gcal = googleCalendarUrl({
+          title: tentativeTitle,
+          description:
+            "Tentatieve afspraak — bevestig via de knop in deze e-mail. Na bevestiging ontvang je een bevestigde agenda-uitnodiging.",
+          location: typeof location_label === "string" ? location_label : "",
+          startIso: start_iso,
+          endIso: end_iso,
+        });
+        const ics = buildIcsContent({
+          title: tentativeTitle,
+          description:
+            "Bevestig je reservering via de link in de e-mail. Deze agenda-invite is ter herinnering tot je bevestigt.",
+          location: typeof location_label === "string" ? location_label : "",
+          startIso: start_iso,
+          endIso: end_iso,
+        });
+        confirmAttachments.push({
+          filename: "afspraak-tentatief.ics",
+          content: btoa(unescape(encodeURIComponent(ics))),
+        });
+        calendarBlock = `
+          <p style="margin: 16px 0 8px; font-size: 14px; color: #374151;"><strong>Agenda (optioneel)</strong></p>
+          <p style="margin: 0 0 12px; font-size: 13px; color: #6b7280;">Voeg een herinnering toe aan je agenda. Na bevestiging sturen we opnieuw een mail met de definitieve afspraak.</p>
+          <p style="margin: 0 0 8px;">
+            <a href="${gcal}" style="display: inline-block; background: #fff; color: #1a73e8; padding: 10px 16px; text-decoration: none; border-radius: 8px; font-weight: 600; border: 1px solid #dadce0;">Google Agenda</a>
+          </p>
+          <p style="margin: 0; font-size: 13px; color: #6b7280;">Bijlage: <strong>afspraak-tentatief.ics</strong> (Apple Agenda / Outlook)</p>
+        `;
+      }
       const html = `
         <div style="font-family: Arial, sans-serif; max-width: 500px; margin: 0 auto; padding: 24px;">
           <h1 style="color: #3990f0; margin-bottom: 8px;">Bevestig je reservering</h1>
@@ -86,6 +123,7 @@ serve(async (req) => {
             <p style="margin: 4px 0;"><strong>🕐 Tijd:</strong> ${formatted_time}</p>
             ${service_summary ? `<p style="margin: 4px 0;"><strong>✂️ Diensten:</strong> ${service_summary}</p>` : ""}
           </div>` : ""}
+          ${calendarBlock}
           <p style="margin: 24px 0;">
             <a href="${confirm_url}" style="display: inline-block; background: #3990f0; color: white; padding: 12px 24px; text-decoration: none; border-radius: 8px; font-weight: bold;">Reservering bevestigen</a>
           </p>
@@ -101,6 +139,7 @@ serve(async (req) => {
         to: [customer_email],
         subject,
         html,
+        ...(confirmAttachments.length ? { attachments: confirmAttachments } : {}),
       });
       return new Response(
         JSON.stringify({ success: true }),
@@ -149,6 +188,34 @@ serve(async (req) => {
       heading = "Afspraakherinnering";
     }
 
+    const startIso = booking.start_time as string;
+    const endIsoRaw = (booking as { end_time?: string | null }).end_time;
+    const endIso = endIsoRaw
+      ? String(endIsoRaw)
+      : new Date(new Date(startIso).getTime() + (Number(service?.duration_minutes) || 30) * 60000).toISOString();
+    const locLabel = `${location?.name || ""}${location?.address ? ` — ${location.address}` : ""}`.trim();
+    const confirmedTitle = `${org?.name || "Salon"}: ${service?.name || "Afspraak"}`;
+    const gcalConfirmed = googleCalendarUrl({
+      title: confirmedTitle,
+      description: `Behandeling bij ${org?.name || "salon"}. Medewerker: ${staff?.name || "-"}`,
+      location: locLabel,
+      startIso,
+      endIso,
+    });
+    const icsConfirmed = buildIcsContent({
+      title: confirmedTitle,
+      description: `Behandeling bij ${org?.name || "salon"}. Medewerker: ${staff?.name || "-"}`,
+      location: locLabel,
+      startIso,
+      endIso,
+    });
+    const bookingAttachments = [
+      {
+        filename: "afspraak.ics",
+        content: btoa(unescape(encodeURIComponent(icsConfirmed))),
+      },
+    ];
+
     const html = `
       <div style="font-family: Arial, sans-serif; max-width: 500px; margin: 0 auto; padding: 24px;">
         <h1 style="color: #3990f0; margin-bottom: 8px;">${heading}</h1>
@@ -161,6 +228,11 @@ serve(async (req) => {
           <p style="margin: 4px 0;"><strong>👤 Medewerker:</strong> ${staff?.name || "Nog niet bekend"}</p>
           <p style="margin: 4px 0;"><strong>📍 Locatie:</strong> ${location?.name || ""}${location?.address ? ` — ${location.address}` : ""}</p>
         </div>
+        <p style="margin: 16px 0 8px; font-size: 14px; color: #374151;"><strong>Toevoegen aan je agenda</strong></p>
+        <p style="margin: 0 0 12px;">
+          <a href="${gcalConfirmed}" style="display: inline-block; background: #fff; color: #1a73e8; padding: 10px 16px; text-decoration: none; border-radius: 8px; font-weight: 600; border: 1px solid #dadce0;">Google Agenda</a>
+        </p>
+        <p style="margin: 0 0 16px; font-size: 13px; color: #6b7280;">Bijlage: <strong>afspraak.ics</strong> voor Apple Agenda of Outlook.</p>
         <p style="color: #6b7280; font-size: 14px;">Als je moet annuleren of verzetten, neem dan rechtstreeks contact met ons op.</p>
         <p style="color: #6b7280; font-size: 14px;">Bedankt dat je voor ${org?.name || "ons"} hebt gekozen!</p>
       </div>
@@ -172,6 +244,7 @@ serve(async (req) => {
       to: [booking.customer_email],
       subject,
       html,
+      attachments: bookingAttachments,
     });
 
     console.log("Email sent:", emailResult);

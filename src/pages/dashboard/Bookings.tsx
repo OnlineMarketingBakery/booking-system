@@ -14,6 +14,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { Loader2, CalendarDays, Search } from "lucide-react";
 import { format, startOfDay, isBefore } from "date-fns";
 import { toast } from "@/hooks/use-toast";
+import { useAuth } from "@/contexts/AuthContext";
 
 const STATUS_COLORS: Record<string, string> = {
   pending: "bg-warning/20 text-warning-foreground border-warning/30",
@@ -26,6 +27,7 @@ const STATUS_COLORS: Record<string, string> = {
 
 export default function Bookings() {
   const { organization } = useOrganization();
+  const { user } = useAuth();
   const queryClient = useQueryClient();
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("all");
@@ -38,7 +40,7 @@ export default function Bookings() {
     queryFn: async () => {
       const { data, error } = await supabase
         .from("bookings")
-        .select("*, services(name, duration_minutes, price, currency, vat_rates(name, percentage)), staff(name), locations(name)")
+        .select("*, services(name, duration_minutes, price, currency, vat_rates(name, percentage)), staff(name), locations(name), gcal_event_id")
         .eq("organization_id", organization!.id)
         .order("start_time", { ascending: false });
       if (error) throw error;
@@ -47,12 +49,28 @@ export default function Bookings() {
     enabled: !!organization,
   });
 
+  const { data: gcalConnected } = useQuery({
+    queryKey: ["gcal-connected-bookings-list", user?.id],
+    queryFn: async () => {
+      const { data } = await supabase
+        .from("google_calendar_tokens")
+        .select("id")
+        .eq("user_id", user!.id)
+        .is("disconnected_at", null)
+        .maybeSingle();
+      return !!data;
+    },
+    enabled: !!user,
+  });
+
+  const ownerDefaultStaffId = organization?.owner_default_staff_id ?? null;
+
   const { data: staffList = [] } = useQuery({
     queryKey: ["staff-list", organization?.id],
     queryFn: async () => {
       const { data, error } = await supabase
         .from("staff")
-        .select("id, name")
+        .select("id, name, is_owner_placeholder")
         .eq("organization_id", organization!.id)
         .eq("is_active", true)
         .order("name");
@@ -61,6 +79,12 @@ export default function Bookings() {
     },
     enabled: !!organization,
   });
+
+  const assignableStylists = staffList.filter((s) => !(s as { is_owner_placeholder?: boolean }).is_owner_placeholder);
+  const salonDefaultRow = staffList.find((s) => (s as { is_owner_placeholder?: boolean }).is_owner_placeholder);
+  /** Only show the synthetic "(bookings)" row when the org default assignee is still the placeholder. */
+  const showPlaceholderDefaultOption =
+    !!ownerDefaultStaffId && salonDefaultRow?.id === ownerDefaultStaffId;
 
   const assignStaffMutation = useMutation({
     mutationFn: async ({ id, staff_id }: { id: string; staff_id: string | null }) => {
@@ -90,12 +114,33 @@ export default function Bookings() {
   });
 
   const statusMutation = useMutation({
-    mutationFn: async ({ id, status }: { id: string; status: string }) => {
+    mutationFn: async ({ id, status, gcal_event_id }: { id: string; status: string; gcal_event_id?: string | null }) => {
       const { error } = await supabase.from("bookings").update({ status: status as any }).eq("id", id);
       if (error) throw error;
+      if (gcalConnected && status === "cancelled" && gcal_event_id && organization?.id) {
+        const { error: delErr } = await supabase.functions.invoke("delete-gcal-event", {
+          body: { event_id: gcal_event_id, organization_id: organization.id },
+        });
+        if (delErr) {
+          console.error("delete-gcal-event after cancel:", delErr);
+        } else {
+          const { error: clearErr } = await supabase.from("bookings").update({ gcal_event_id: null }).eq("id", id);
+          if (clearErr) console.error("clear gcal_event_id after cancel:", clearErr);
+        }
+      } else if (
+        gcalConnected &&
+        (status === "confirmed" || status === "paid" || status === "pending")
+      ) {
+        const { error: fnErr } = await supabase.functions.invoke("sync-booking-to-gcal", {
+          body: { booking_id: id },
+        });
+        if (fnErr) console.error("sync-booking-to-gcal after status change:", fnErr);
+      }
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["all-bookings"] });
+      queryClient.invalidateQueries({ queryKey: ["calendar-bookings"] });
+      queryClient.invalidateQueries({ queryKey: ["gcal-events"] });
       toast({ title: "Status updated" });
     },
   });
@@ -190,18 +235,36 @@ export default function Bookings() {
                     <TableCell className="text-muted-foreground text-sm">{vatLabel}</TableCell>
                     <TableCell>
                       <Select
-                        value={b.staff_id ?? "unassigned"}
-                        onValueChange={(val) => assignStaffMutation.mutate({ id: b.id, staff_id: val === "unassigned" ? null : val })}
+                        value={
+                          b.staff_id ??
+                          ownerDefaultStaffId ??
+                          "__none__"
+                        }
+                        onValueChange={(val) =>
+                          assignStaffMutation.mutate({
+                            id: b.id,
+                            staff_id: val === "__none__" ? null : val,
+                          })
+                        }
                         disabled={assignStaffMutation.isPending}
                       >
-                        <SelectTrigger className="h-8 w-[140px]">
+                        <SelectTrigger className="h-8 min-w-[160px] max-w-[220px]">
                           <SelectValue />
                         </SelectTrigger>
                         <SelectContent>
-                          <SelectItem value="unassigned">Unassigned</SelectItem>
-                          {staffList.map((s) => (
-                            <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>
+                          {showPlaceholderDefaultOption && ownerDefaultStaffId ? (
+                            <SelectItem value={ownerDefaultStaffId}>
+                              {salonDefaultRow?.name ?? "Salon (default)"}
+                            </SelectItem>
+                          ) : null}
+                          {assignableStylists.map((s) => (
+                            <SelectItem key={s.id} value={s.id}>
+                              {s.name}
+                            </SelectItem>
                           ))}
+                          {!ownerDefaultStaffId && (
+                            <SelectItem value="__none__">Unassigned</SelectItem>
+                          )}
                         </SelectContent>
                       </Select>
                     </TableCell>
@@ -219,7 +282,7 @@ export default function Bookings() {
                           <Button size="sm" variant="outline" onClick={() => { setRescheduleBooking(b); setNewDate(new Date(b.start_time)); setNewTime(format(new Date(b.start_time), "HH:mm")); }}>
                             <CalendarDays className="w-3" /> Reschedule
                           </Button>
-                          <Select onValueChange={(val) => statusMutation.mutate({ id: b.id, status: val })}>
+                          <Select onValueChange={(val) => statusMutation.mutate({ id: b.id, status: val, gcal_event_id: b.gcal_event_id })}>
                             <SelectTrigger className="h-[36px] w-[120px] inline-flex">
                               <SelectValue placeholder="Set status" />
                             </SelectTrigger>

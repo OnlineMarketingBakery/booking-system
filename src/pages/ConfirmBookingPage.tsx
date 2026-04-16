@@ -4,6 +4,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Loader2, CheckCircle2, AlertCircle } from "lucide-react";
+import { getErrorMessage } from "@/lib/errorMessage";
 
 export default function ConfirmBookingPage() {
   const [searchParams] = useSearchParams();
@@ -24,8 +25,8 @@ export default function ConfirmBookingPage() {
         const { data, error } = await supabase.functions.invoke("confirm-booking-by-token", {
           body: { token },
         });
-        if (error) throw new Error(error.message || "Confirmation failed");
-        if (data?.error) throw new Error(data.error);
+        if (error) throw new Error(getErrorMessage(error, "Confirmation failed"));
+        if (data?.error) throw new Error(typeof data.error === "string" ? data.error : "Confirmation failed");
 
         if (data?.free && data?.booking_ids?.length > 0) {
           navigate(`/book/success?booking_id=${data.booking_ids[0]}`, { replace: true });
@@ -39,7 +40,7 @@ export default function ConfirmBookingPage() {
         setErrorMessage("Invalid response from server.");
       } catch (e) {
         setStatus("error");
-        setErrorMessage(e instanceof Error ? e.message : "Something went wrong.");
+        setErrorMessage(getErrorMessage(e, "Something went wrong."));
       }
     })();
   }, [token, navigate]);

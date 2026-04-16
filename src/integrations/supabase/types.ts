@@ -22,6 +22,7 @@ export type Database = {
           email: string
           full_name: string | null
           id: string
+          must_change_password: boolean
           password_hash: string
           updated_at: string
         }
@@ -32,6 +33,7 @@ export type Database = {
           email: string
           full_name?: string | null
           id?: string
+          must_change_password?: boolean
           password_hash: string
           updated_at?: string
         }
@@ -42,6 +44,7 @@ export type Database = {
           email?: string
           full_name?: string | null
           id?: string
+          must_change_password?: boolean
           password_hash?: string
           updated_at?: string
         }
@@ -134,6 +137,7 @@ export type Database = {
           customer_slot_date: string | null
           customer_slot_time: string | null
           end_time: string
+          gcal_calendar_id: string | null
           gcal_event_id: string | null
           id: string
           location_id: string
@@ -156,6 +160,7 @@ export type Database = {
           customer_slot_date?: string | null
           customer_slot_time?: string | null
           end_time: string
+          gcal_calendar_id?: string | null
           gcal_event_id?: string | null
           id?: string
           location_id: string
@@ -178,6 +183,7 @@ export type Database = {
           customer_slot_date?: string | null
           customer_slot_time?: string | null
           end_time?: string
+          gcal_calendar_id?: string | null
           gcal_event_id?: string | null
           id?: string
           location_id?: string
@@ -613,15 +619,59 @@ export type Database = {
           },
         ]
       }
+      organization_audit_log: {
+        Row: {
+          action: string
+          actor_user_id: string | null
+          created_at: string
+          details: Json
+          entity_id: string | null
+          entity_type: string
+          id: string
+          organization_id: string
+        }
+        Insert: {
+          action: string
+          actor_user_id?: string | null
+          created_at?: string
+          details?: Json
+          entity_id?: string | null
+          entity_type: string
+          id?: string
+          organization_id: string
+        }
+        Update: {
+          action?: string
+          actor_user_id?: string | null
+          created_at?: string
+          details?: Json
+          entity_id?: string | null
+          entity_type?: string
+          id?: string
+          organization_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "organization_audit_log_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       organizations: {
         Row: {
           created_at: string
           embed_theme: Record<string, unknown> | null
+          gcal_use_staff_secondary_calendars: boolean
           holiday_region: string | null
           id: string
           logo_url: string | null
           name: string
+          owner_default_staff_id: string | null
           owner_id: string
+          timezone: string
           reminder_email_day_before: boolean
           reminder_email_hour_before: boolean
           slug: string
@@ -632,11 +682,14 @@ export type Database = {
         Insert: {
           created_at?: string
           embed_theme?: Record<string, unknown> | null
+          gcal_use_staff_secondary_calendars?: boolean
           holiday_region?: string | null
           id?: string
           logo_url?: string | null
           name: string
+          owner_default_staff_id?: string | null
           owner_id: string
+          timezone?: string
           reminder_email_day_before?: boolean
           reminder_email_hour_before?: boolean
           slug: string
@@ -647,15 +700,51 @@ export type Database = {
         Update: {
           created_at?: string
           embed_theme?: Record<string, unknown> | null
+          gcal_use_staff_secondary_calendars?: boolean
           holiday_region?: string | null
           id?: string
           logo_url?: string | null
           name?: string
+          owner_default_staff_id?: string | null
           owner_id?: string
+          timezone?: string
           reminder_email_day_before?: boolean
           reminder_email_hour_before?: boolean
           slug?: string
           stripe_account_id?: string | null
+          tier?: Database["public"]["Enums"]["org_tier"]
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      plan_definitions: {
+        Row: {
+          created_at: string
+          description: string | null
+          display_name: string
+          features: Json
+          max_locations: number
+          sort_order: number
+          tier: Database["public"]["Enums"]["org_tier"]
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          description?: string | null
+          display_name: string
+          features?: Json
+          max_locations: number
+          sort_order?: number
+          tier: Database["public"]["Enums"]["org_tier"]
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          description?: string | null
+          display_name?: string
+          features?: Json
+          max_locations?: number
+          sort_order?: number
           tier?: Database["public"]["Enums"]["org_tier"]
           updated_at?: string
         }
@@ -687,6 +776,35 @@ export type Database = {
           updated_at?: string
         }
         Relationships: []
+      }
+      purchase_account_setup_tokens: {
+        Row: {
+          expires_at: string
+          id: string
+          token: string
+          user_id: string
+        }
+        Insert: {
+          expires_at?: string
+          id?: string
+          token: string
+          user_id: string
+        }
+        Update: {
+          expires_at?: string
+          id?: string
+          token?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "purchase_account_setup_tokens_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "app_users"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       services: {
         Row: {
@@ -756,8 +874,10 @@ export type Database = {
         Row: {
           created_at: string
           email: string | null
+          gcal_secondary_calendar_id: string | null
           id: string
           is_active: boolean
+          is_owner_placeholder: boolean
           name: string
           organization_id: string
           phone: string | null
@@ -767,8 +887,10 @@ export type Database = {
         Insert: {
           created_at?: string
           email?: string | null
+          gcal_secondary_calendar_id?: string | null
           id?: string
           is_active?: boolean
+          is_owner_placeholder?: boolean
           name: string
           organization_id: string
           phone?: string | null
@@ -778,8 +900,10 @@ export type Database = {
         Update: {
           created_at?: string
           email?: string | null
+          gcal_secondary_calendar_id?: string | null
           id?: string
           is_active?: boolean
+          is_owner_placeholder?: boolean
           name?: string
           organization_id?: string
           phone?: string | null
@@ -984,7 +1108,9 @@ export type Database = {
           holiday_region: string | null
           logo_url: string | null
           name: string | null
+          owner_default_staff_id: string | null
           slug: string | null
+          timezone: string | null
         }
         Insert: {
           id?: string | null
@@ -992,7 +1118,9 @@ export type Database = {
           holiday_region?: string | null
           logo_url?: string | null
           name?: string | null
+          owner_default_staff_id?: string | null
           slug?: string | null
+          timezone?: string | null
         }
         Update: {
           id?: string | null
@@ -1000,7 +1128,9 @@ export type Database = {
           holiday_region?: string | null
           logo_url?: string | null
           name?: string | null
+          owner_default_staff_id?: string | null
           slug?: string | null
+          timezone?: string | null
         }
         Relationships: []
       }
@@ -1080,6 +1210,15 @@ export type Database = {
           p_exclude_pending_token?: string | null
         }
         Returns: { start_time: string; staff_id: string | null }[]
+      }
+      get_location_booking_occupancy: {
+        Args: {
+          p_location_id: string
+          p_range_end: string
+          p_range_start: string
+          p_exclude_pending_token?: string | null
+        }
+        Returns: { start_time: string; end_time: string; staff_id: string | null }[]
       }
     }
     Enums: {

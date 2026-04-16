@@ -2,7 +2,7 @@ import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import Stripe from "https://esm.sh/stripe@18.5.0";
 import { createClient } from "npm:@supabase/supabase-js@2.57.2";
 import Holidays from "npm:date-holidays@3.26.9";
-import { isSlotAvailableForBooking } from "../_shared/slotStartCapacity.ts";
+import { isWallIntervalAvailableForBooking, pickAutoStaffIdForInterval } from "../_shared/slotStartCapacity.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -86,8 +86,6 @@ function validateInput(body: Record<string, unknown>) {
 const SLOT_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const SLOT_TIME_RE = /^([01]?\d|2[0-3]):[0-5]\d$/;
 
-const BOOKING_BUFFER_MIN = 15;
-
 /** Date + time exactly as shown on the booking UI (for customer-facing emails). */
 function parseCustomerSlot(body: Record<string, unknown>): { date: string; time: string } | null {
   const d = body.customer_slot_date;
@@ -132,14 +130,14 @@ serve(async (req) => {
     const {
       organization_id,
       location_id,
-      staff_id: staffIdParam,
       customer_email,
       start_time,
     } = body;
     const customer_name = (typeof body.customer_name === "string" ? body.customer_name : (body as Record<string, unknown>).customerName as string | undefined)?.trim() || null;
     const customer_phone = (typeof body.customer_phone === "string" ? body.customer_phone : (body as Record<string, unknown>).customerPhone as string | undefined)?.trim() || null;
 
-    const staff_id = (staffIdParam && typeof staffIdParam === "string" && UUID_RE.test(staffIdParam)) ? staffIdParam : null;
+    /** Assigned server-side: public booking never trusts client staff_id. */
+    let staff_id: string | null = null;
 
     // Fetch all services and verify they exist and are active
     const { data: servicesData, error: servicesError } = await supabaseClient
@@ -153,7 +151,7 @@ serve(async (req) => {
     // Verify organization, location, and staff exist and are active
     const { data: org, error: orgError } = await supabaseClient
       .from("organizations")
-      .select("name, holiday_region")
+      .select("name, holiday_region, owner_default_staff_id")
       .eq("id", organization_id)
       .single();
     if (orgError || !org) throw new Error("Organization not found");
@@ -207,6 +205,19 @@ serve(async (req) => {
       .eq("is_active", true)
       .single();
     if (locError || !loc) throw new Error("Location not found or inactive");
+
+    const ownerDefaultStaffId = (org as { owner_default_staff_id?: string | null }).owner_default_staff_id ?? null;
+    const { data: slinkAllCh } = await supabaseClient
+      .from("staff_locations")
+      .select("staff_id")
+      .eq("location_id", location_id);
+    const allSidCh = [...new Set((slinkAllCh ?? []).map((r: { staff_id: string }) => r.staff_id))];
+    const { data: staffMetaCh } = allSidCh.length > 0
+      ? await supabaseClient.from("staff").select("id, is_owner_placeholder").in("id", allSidCh).eq("is_active", true)
+      : { data: [] as { id: string; is_owner_placeholder?: boolean | null }[] };
+    const realStaffIdsCheckout = (staffMetaCh ?? [])
+      .filter((s) => !s.is_owner_placeholder)
+      .map((s) => s.id);
 
     // Check that the booking time does not fall within a closure window (specific hours closed)
     const { data: closureSlots = [] } = await supabaseClient
@@ -273,45 +284,19 @@ serve(async (req) => {
       (b) => !b.applies_whole_salon && bookingOverlapsBreak(b.start_time, b.end_time),
     );
 
-    if (staff_id) {
-      for (const b of staffOverlappingBreaks) {
-        const ids = b.organization_break_slot_staff ?? [];
-        if (ids.some((x) => x.staff_id === staff_id)) {
-          return new Response(
-            JSON.stringify({ error: "This time falls within a staff break period. Please choose another time." }),
-            { headers: { ...corsHeaders, "Content-Type": "application/json" }, status: 400 }
-          );
-        }
-      }
-    } else if (staffOverlappingBreaks.length > 0) {
-      const { data: slinks } = await supabaseClient.from("staff_locations").select("staff_id").eq("location_id", location_id);
-      const sids = [...new Set((slinks ?? []).map((r: { staff_id: string }) => r.staff_id))];
-      if (sids.length > 0) {
-        const { data: activeS } = await supabaseClient.from("staff").select("id").in("id", sids).eq("is_active", true);
-        const activeSet = new Set((activeS ?? []).map((r: { id: string }) => r.id));
-        const anyFree = [...activeSet].some((sid) =>
-          !staffOverlappingBreaks.some((br) =>
-            (br.organization_break_slot_staff ?? []).some((x: { staff_id: string }) => x.staff_id === sid),
-          ),
+    if (staffOverlappingBreaks.length > 0 && realStaffIdsCheckout.length > 0) {
+      const activeSet = new Set(realStaffIdsCheckout);
+      const anyFree = [...activeSet].some((sid) =>
+        !staffOverlappingBreaks.some((br) =>
+          (br.organization_break_slot_staff ?? []).some((x: { staff_id: string }) => x.staff_id === sid),
+        ),
+      );
+      if (!anyFree) {
+        return new Response(
+          JSON.stringify({ error: "This time falls within a break period. Please choose another time." }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" }, status: 400 }
         );
-        if (!anyFree) {
-          return new Response(
-            JSON.stringify({ error: "This time falls within a break period. Please choose another time." }),
-            { headers: { ...corsHeaders, "Content-Type": "application/json" }, status: 400 }
-          );
-        }
       }
-    }
-
-    // When staff_id is provided, verify the staff member exists and is active
-    if (staff_id) {
-      const { data: staffMember, error: staffError } = await supabaseClient
-        .from("staff")
-        .select("id")
-        .eq("id", staff_id)
-        .eq("is_active", true)
-        .single();
-      if (staffError || !staffMember) throw new Error("Staff member not found or inactive");
     }
 
     const excludePendingToken =
@@ -319,19 +304,9 @@ serve(async (req) => {
         ? ((body as Record<string, unknown>).pending_confirmation_token as string).trim() || null
         : null;
 
-    const { data: slinksCap } = await supabaseClient
-      .from("staff_locations")
-      .select("staff_id")
-      .eq("location_id", location_id);
-    const capSids = [...new Set((slinksCap ?? []).map((r: { staff_id: string }) => r.staff_id))];
     let eligibleStaffIdsForCapacity: string[] = [];
-    if (capSids.length > 0) {
-      const { data: activeCap } = await supabaseClient
-        .from("staff")
-        .select("id")
-        .in("id", capSids)
-        .eq("is_active", true);
-      const activeCapSet = new Set((activeCap ?? []).map((r: { id: string }) => r.id));
+    if (realStaffIdsCheckout.length > 0) {
+      const activeCapSet = new Set(realStaffIdsCheckout);
       const wallOverlapCap = (bStart: string, bEnd: string) => {
         const cStartStr = `${dateStr}T${String(bStart).slice(0, 5)}:00`;
         const cEndStr = `${dateStr}T${String(bEnd).slice(0, 5)}:00`;
@@ -346,24 +321,34 @@ serve(async (req) => {
           return wallOverlapCap(brk.start_time, brk.end_time);
         })
       );
+    } else if (ownerDefaultStaffId) {
+      eligibleStaffIdsForCapacity = [ownerDefaultStaffId];
     }
 
     const padMs = 36 * 60 * 60 * 1000;
-    const { data: slotRows, error: slotErr } = await supabaseClient.rpc("get_location_slot_start_bookings", {
+    const bookingSpanEndMs = startDate.getTime() + totalDurationMin * 60000;
+    const { data: slotRows, error: slotErr } = await supabaseClient.rpc("get_location_booking_occupancy", {
       p_location_id: location_id,
       p_range_start: new Date(startDate.getTime() - padMs).toISOString(),
-      p_range_end: new Date(startDate.getTime() + padMs).toISOString(),
+      p_range_end: new Date(bookingSpanEndMs + padMs).toISOString(),
       p_exclude_pending_token: excludePendingToken,
     });
     if (slotErr) {
-      console.error("[create-booking-checkout] get_location_slot_start_bookings:", slotErr);
-    } else if (
-      !isSlotAvailableForBooking({
-        rows: (slotRows ?? []) as { start_time: string; staff_id: string | null }[],
-        slotStartMs: startDate.getTime(),
-        eligibleStaffCount: eligibleStaffIdsForCapacity.length,
-        locationHasNoStaff: capSids.length === 0,
-        requestedStaffId: staff_id,
+      console.error("[create-booking-checkout] get_location_booking_occupancy:", slotErr);
+      return new Response(
+        JSON.stringify({ error: "Could not verify availability. Please try again." }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" }, status: 500 },
+      );
+    }
+    const occRows = (slotRows ?? []) as { start_time: string; end_time: string; staff_id: string | null }[];
+    if (
+      !isWallIntervalAvailableForBooking({
+        rows: occRows,
+        intervalStartMs: startDate.getTime(),
+        intervalEndMs: bookingSpanEndMs,
+        eligibleStaffIds: eligibleStaffIdsForCapacity,
+        locationHasNoStaff: realStaffIdsCheckout.length === 0 && !ownerDefaultStaffId,
+        requestedStaffId: null,
       })
     ) {
       return new Response(
@@ -373,6 +358,30 @@ serve(async (req) => {
         { headers: { ...corsHeaders, "Content-Type": "application/json" }, status: 409 },
       );
     }
+    staff_id = pickAutoStaffIdForInterval({
+      rows: occRows,
+      intervalStartMs: startDate.getTime(),
+      intervalEndMs: bookingSpanEndMs,
+      eligibleStaffIds: eligibleStaffIdsForCapacity,
+      realStaffIds: realStaffIdsCheckout,
+      ownerDefaultStaffId,
+    });
+    if (!staff_id) {
+      return new Response(
+        JSON.stringify({
+          error: "This time slot is no longer available. Please choose another time.",
+        }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" }, status: 409 },
+      );
+    }
+    const { data: staffMember, error: staffError } = await supabaseClient
+      .from("staff")
+      .select("id")
+      .eq("id", staff_id)
+      .eq("organization_id", organization_id)
+      .eq("is_active", true)
+      .single();
+    if (staffError || !staffMember) throw new Error("Staff member not found or inactive");
 
     const customerSlot = parseCustomerSlot(body as Record<string, unknown>);
 

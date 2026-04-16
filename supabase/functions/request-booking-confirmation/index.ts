@@ -1,7 +1,7 @@
 import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import { createClient } from "npm:@supabase/supabase-js@2.57.2";
 import Holidays from "npm:date-holidays@3.26.9";
-import { isSlotAvailableForBooking } from "../_shared/slotStartCapacity.ts";
+import { isWallIntervalAvailableForBooking, pickAutoStaffIdForInterval } from "../_shared/slotStartCapacity.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -222,9 +222,24 @@ serve(async (req) => {
       return bookStart < cEnd && bookEndTime > cStart;
     };
 
-    const staffIdHold = typeof body.staff_id === "string" && UUID_RE.test(body.staff_id as string)
-      ? (body.staff_id as string)
-      : null;
+    const { data: orgDef } = await supabase
+      .from("organizations")
+      .select("owner_default_staff_id, timezone")
+      .eq("id", organization_id)
+      .maybeSingle();
+    const ownerDefaultStaffId = (orgDef as { owner_default_staff_id?: string | null } | null)?.owner_default_staff_id ?? null;
+
+    const { data: slinkAll } = await supabase
+      .from("staff_locations")
+      .select("staff_id")
+      .eq("location_id", location_id);
+    const allSid = [...new Set((slinkAll ?? []).map((r: { staff_id: string }) => r.staff_id))];
+    const { data: staffMeta } = allSid.length > 0
+      ? await supabase.from("staff").select("id, is_owner_placeholder").in("id", allSid).eq("is_active", true)
+      : { data: [] as { id: string; is_owner_placeholder?: boolean | null }[] };
+    const realStaffIds = (staffMeta ?? [])
+      .filter((s) => !s.is_owner_placeholder)
+      .map((s) => s.id);
 
     for (const b of applicableBreaks) {
       if (!b.applies_whole_salon) continue;
@@ -240,42 +255,24 @@ serve(async (req) => {
       (b) => !b.applies_whole_salon && holdOverlapsBreak(b.start_time, b.end_time),
     );
 
-    if (staffIdHold) {
-      for (const b of staffOverlappingBreaks) {
-        const ids = b.organization_break_slot_staff ?? [];
-        if (ids.some((x) => x.staff_id === staffIdHold)) {
-          return new Response(
-            JSON.stringify({ error: "This time falls within a staff break period. Please choose another time." }),
-            { headers: { ...corsHeaders, "Content-Type": "application/json" }, status: 400 }
-          );
-        }
-      }
-    } else if (staffOverlappingBreaks.length > 0) {
-      const { data: slinks } = await supabase.from("staff_locations").select("staff_id").eq("location_id", location_id);
-      const sids = [...new Set((slinks ?? []).map((r: { staff_id: string }) => r.staff_id))];
-      if (sids.length > 0) {
-        const { data: activeS } = await supabase.from("staff").select("id").in("id", sids).eq("is_active", true);
-        const activeSet = new Set((activeS ?? []).map((r: { id: string }) => r.id));
-        const anyFree = [...activeSet].some((sid) =>
-          !staffOverlappingBreaks.some((br) =>
-            (br.organization_break_slot_staff ?? []).some((x: { staff_id: string }) => x.staff_id === sid),
-          ),
+    if (staffOverlappingBreaks.length > 0 && realStaffIds.length > 0) {
+      const activeSet = new Set(realStaffIds);
+      const anyFree = [...activeSet].some((sid) =>
+        !staffOverlappingBreaks.some((br) =>
+          (br.organization_break_slot_staff ?? []).some((x: { staff_id: string }) => x.staff_id === sid),
+        ),
+      );
+      if (!anyFree) {
+        return new Response(
+          JSON.stringify({ error: "This time falls within a break period. Please choose another time." }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" }, status: 400 }
         );
-        if (!anyFree) {
-          return new Response(
-            JSON.stringify({ error: "This time falls within a break period. Please choose another time." }),
-            { headers: { ...corsHeaders, "Content-Type": "application/json" }, status: 400 }
-          );
-        }
       }
     }
 
-    const { data: slinksCap } = await supabase.from("staff_locations").select("staff_id").eq("location_id", location_id);
-    const capSids = [...new Set((slinksCap ?? []).map((r: { staff_id: string }) => r.staff_id))];
     let eligibleStaffIdsForCapacity: string[] = [];
-    if (capSids.length > 0) {
-      const { data: activeCap } = await supabase.from("staff").select("id").in("id", capSids).eq("is_active", true);
-      const activeCapSet = new Set((activeCap ?? []).map((r: { id: string }) => r.id));
+    if (realStaffIds.length > 0) {
+      const activeCapSet = new Set(realStaffIds);
       const wallOverlapCap = (bStart: string, bEnd: string) => {
         const cStartStr = `${dateStr}T${String(bStart).slice(0, 5)}:00`;
         const cEndStr = `${dateStr}T${String(bEnd).slice(0, 5)}:00`;
@@ -290,26 +287,52 @@ serve(async (req) => {
           return wallOverlapCap(brk.start_time, brk.end_time);
         }),
       );
+    } else if (ownerDefaultStaffId) {
+      eligibleStaffIdsForCapacity = [ownerDefaultStaffId];
     }
 
     const padMs = 36 * 60 * 60 * 1000;
-    const { data: slotRows, error: slotErr } = await supabase.rpc("get_location_slot_start_bookings", {
+    const holdEndMs = holdEnd.getTime();
+    const { data: slotRows, error: slotErr } = await supabase.rpc("get_location_booking_occupancy", {
       p_location_id: location_id,
       p_range_start: new Date(startDate.getTime() - padMs).toISOString(),
-      p_range_end: new Date(startDate.getTime() + padMs).toISOString(),
+      p_range_end: new Date(holdEndMs + padMs).toISOString(),
       p_exclude_pending_token: null,
     });
     if (slotErr) {
-      console.error("[request-booking-confirmation] get_location_slot_start_bookings:", slotErr);
-    } else if (
-      !isSlotAvailableForBooking({
-        rows: (slotRows ?? []) as { start_time: string; staff_id: string | null }[],
-        slotStartMs: startDate.getTime(),
-        eligibleStaffCount: eligibleStaffIdsForCapacity.length,
-        locationHasNoStaff: capSids.length === 0,
-        requestedStaffId: staffIdHold,
+      console.error("[request-booking-confirmation] get_location_booking_occupancy:", slotErr);
+      return new Response(
+        JSON.stringify({ error: "Could not verify availability. Please try again." }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" }, status: 500 },
+      );
+    }
+    const holdOccRows = (slotRows ?? []) as { start_time: string; end_time: string; staff_id: string | null }[];
+    if (
+      !isWallIntervalAvailableForBooking({
+        rows: holdOccRows,
+        intervalStartMs: startDate.getTime(),
+        intervalEndMs: holdEndMs,
+        eligibleStaffIds: eligibleStaffIdsForCapacity,
+        locationHasNoStaff: realStaffIds.length === 0 && !ownerDefaultStaffId,
+        requestedStaffId: null,
       })
     ) {
+      return new Response(
+        JSON.stringify({
+          error: "This time slot is no longer available. Please choose another time.",
+        }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" }, status: 409 },
+      );
+    }
+    const resolvedHoldStaffId = pickAutoStaffIdForInterval({
+      rows: holdOccRows,
+      intervalStartMs: startDate.getTime(),
+      intervalEndMs: holdEndMs,
+      eligibleStaffIds: eligibleStaffIdsForCapacity,
+      realStaffIds,
+      ownerDefaultStaffId,
+    });
+    if (!resolvedHoldStaffId) {
       return new Response(
         JSON.stringify({
           error: "This time slot is no longer available. Please choose another time.",
@@ -325,7 +348,7 @@ serve(async (req) => {
     const payload = {
       organization_id: body.organization_id,
       location_id,
-      staff_id: body.staff_id ?? null,
+      staff_id: resolvedHoldStaffId,
       service_ids: serviceIds,
       customer_name: (body.customer_name as string).trim(),
       customer_email,
@@ -341,15 +364,31 @@ serve(async (req) => {
     if (insertErr) throw new Error("Failed to create pending confirmation: " + insertErr.message);
 
     const { data: org } = await supabase.from("organizations").select("name").eq("id", organization_id).single();
-    const { data: services } = await supabase.from("services").select("name").in("id", payload.service_ids);
+    const { data: services } = await supabase.from("services").select("name, duration_minutes").in("id", payload.service_ids);
     const service_summary = services?.map((s: { name: string }) => s.name).join(", ") || "";
+    const totalDurationMin = (services ?? []).reduce(
+      (acc: number, s: { duration_minutes?: number | null }) => acc + (Number(s.duration_minutes) || 30),
+      0,
+    );
+    const startIso = String(payload.start_time);
+    const endIso = new Date(new Date(startIso).getTime() + Math.max(totalDurationMin, 5) * 60000).toISOString();
+    const { data: locRow } = await supabase
+      .from("locations")
+      .select("name, address")
+      .eq("id", location_id)
+      .maybeSingle();
+    const location_label = [locRow?.name, (locRow as { address?: string | null } | null)?.address]
+      .filter(Boolean)
+      .join(" — ");
 
     const appUrl = Deno.env.get("APP_URL") || req.headers.get("origin") || "http://localhost:8080";
     const confirmUrl = `${appUrl}/book/confirm?token=${token}`;
     const releaseHoldUrl = `${appUrl}/book/release-hold?token=${token}`;
     const slotForEmail = parseCustomerSlot(payload as unknown as Record<string, unknown>);
     const startTime = new Date(payload.start_time as string);
-    const emailTz = Deno.env.get("BOOKING_EMAIL_TIMEZONE") || "Europe/Amsterdam";
+    const emailTz = (orgDef as { timezone?: string } | null)?.timezone?.trim() ||
+      Deno.env.get("BOOKING_EMAIL_TIMEZONE") ||
+      "Europe/Amsterdam";
     const formatted_date = slotForEmail
       ? formatDateNlFromYmd(slotForEmail.date)
       : startTime.toLocaleDateString("nl-NL", {
@@ -378,6 +417,9 @@ serve(async (req) => {
           service_summary,
           confirm_url: confirmUrl,
           release_hold_url: releaseHoldUrl,
+          start_iso: startIso,
+          end_iso: endIso,
+          location_label: location_label || undefined,
         },
       }),
     });

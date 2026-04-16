@@ -14,8 +14,8 @@ export default {
     },
     extend: {
       colors: {
-        border: "rgba(57 144 240, 0.40)",
-        input: "hsl(var(--input))",
+        border: "hsl(var(--border) / <alpha-value>)",
+        input: "hsl(var(--input) / <alpha-value>)",
         ring: "#3990F0",
         background: "hsl(var(--background))",
         foreground: "hsl(var(--foreground))",
@@ -56,14 +56,17 @@ export default {
           foreground: "hsl(var(--warning-foreground))",
         },
         sidebar: {
-          DEFAULT: "#002752",
+          DEFAULT: "hsl(var(--sidebar-background))",
           foreground: "hsl(var(--sidebar-foreground))",
           primary: "#3990F0",
           "primary-foreground": "hsl(var(--sidebar-primary-foreground))",
-          accent: "#fff",
+          accent: "hsl(var(--sidebar-accent))",
           "accent-foreground": "hsl(var(--sidebar-accent-foreground))",
-          border: "#EBF3FE",
+          border: "hsl(var(--sidebar-border))",
           ring: "hsl(var(--sidebar-ring))",
+        },
+        dashboard: {
+          canvas: "hsl(var(--dashboard-canvas))",
         },
       },
       borderRadius: {

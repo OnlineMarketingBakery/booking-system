@@ -74,7 +74,9 @@ export default function Overview() {
       // Bookings per staff (pie)
       const staffMap = new Map<string, number>();
       for (const b of bookings) {
-        const staffName = (b.staff as any)?.name || "Unassigned";
+        const staffName =
+          (b.staff as { name?: string } | null)?.name ??
+          (b.staff_id == null ? "Salon inbox" : "Unknown");
         staffMap.set(staffName, (staffMap.get(staffName) || 0) + 1);
       }
       const staffData = Array.from(staffMap, ([name, value]) => ({ name, value }));

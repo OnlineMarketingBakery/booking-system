@@ -19,7 +19,7 @@ import { SpamProtectionFields } from "@/components/SpamProtectionFields";
 import { Loader2 } from "lucide-react";
 
 export default function Auth() {
-  const { signIn, signUp, user, requestPasswordReset } = useAuth();
+  const { signIn, signUp, user, requestPasswordReset, loading: authLoading } = useAuth();
   const navigate = useNavigate();
   const { toast } = useToast();
   const [loading, setLoading] = useState(false);
@@ -29,9 +29,17 @@ export default function Auth() {
   const [forgotSent, setForgotSent] = useState(false);
   const { validateSpamProtection, SpamProtectionFieldsProps } = useSpamProtection();
 
+  if (authLoading) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-muted/30 px-4">
+        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+      </div>
+    );
+  }
+
   // Redirect if already logged in
   if (user) {
-    navigate("/dashboard", { replace: true });
+    navigate(user.must_change_password ? "/dashboard/settings/general" : "/dashboard", { replace: true });
     return null;
   }
 
@@ -44,8 +52,8 @@ export default function Auth() {
     }
     setLoading(true);
     try {
-      await signIn(form.get("email") as string, form.get("password") as string);
-      navigate("/dashboard");
+      const { must_change_password } = await signIn(form.get("email") as string, form.get("password") as string);
+      navigate(must_change_password ? "/dashboard/settings/general" : "/dashboard");
     } catch (err: any) {
       toast({ title: "Sign in failed", description: err.message, variant: "destructive" });
     } finally {
@@ -75,7 +83,9 @@ export default function Auth() {
         return;
       }
       toast({ title: "Account created!", description: "You're now signed in." });
-      navigate("/dashboard");
+      navigate(
+        result && "must_change_password" in result && result.must_change_password ? "/dashboard/settings/general" : "/dashboard"
+      );
     } catch (err: any) {
       toast({ title: "Sign up failed", description: err.message, variant: "destructive" });
     } finally {
