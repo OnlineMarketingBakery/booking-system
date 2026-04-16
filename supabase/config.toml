@@ -15,6 +15,9 @@ verify_jwt = false
 [functions.admin-delete-user]
 verify_jwt = false
 
+[functions.admin-delete-organization]
+verify_jwt = false
+
 [functions.seed-test-data]
 verify_jwt = false
 

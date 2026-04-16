@@ -171,6 +171,11 @@ async function createOwnerWithData(admin: any, cfg: OwnerConfig): Promise<string
     staffRecords.map((s: any) => ({ staff_id: s.id, location_id: location.id }))
   );
 
+  await admin
+    .from("organizations")
+    .update({ owner_default_staff_id: staffRecords[0].id as string })
+    .eq("id", orgId as string);
+
   // Bookings
   const now = new Date();
   const statuses = ["confirmed", "completed", "paid", "pending", "cancelled"];

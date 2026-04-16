@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect, type CSSProperties } from "react";
+import { useState, useMemo, useEffect, useRef, type CSSProperties } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useOrganization } from "@/hooks/useOrganization";
@@ -50,6 +50,7 @@ import {
   isBefore,
   max,
   min,
+  differenceInMinutes,
 } from "date-fns";
 import { toast } from "@/hooks/use-toast";
 
@@ -60,6 +61,40 @@ const CAL_END_HOUR = HOURS[HOURS.length - 1] + 1;
 const HOUR_ROW_PX = 80;
 /** Sub-hour grid: 15-minute row height (hour band / 4). */
 const CAL_QUARTER_PX = HOUR_ROW_PX / 4;
+
+const SNAP_MINUTES = 15;
+
+/** Y offset from top of day column → minutes since midnight, snapped, clamped to visible band (end may be exactly CAL_END_HOUR). */
+function snappedMinutesFromY(yPx: number): number {
+  const bandMin = CAL_START_HOUR * 60;
+  const bandMaxExclusive = CAL_END_HOUR * 60;
+  const raw = bandMin + (yPx / HOUR_ROW_PX) * 60;
+  const snapped = Math.round(raw / SNAP_MINUTES) * SNAP_MINUTES;
+  return Math.max(bandMin, Math.min(snapped, bandMaxExclusive));
+}
+
+function dateFromDayMinutes(day: Date, minutesSinceMidnight: number): Date {
+  const h = Math.floor(minutesSinceMidnight / 60);
+  const m = minutesSinceMidnight % 60;
+  return setMinutes(setHours(startOfDay(day), h), m);
+}
+
+function isBandMinuteInPast(day: Date, minutesSinceMidnight: number): boolean {
+  return isBefore(dateFromDayMinutes(day, minutesSinceMidnight), new Date());
+}
+
+/** First 15m grid point at or after now (same calendar day only). */
+function firstSnappedMinuteNotPast(day: Date): number | null {
+  if (!isSameDay(day, new Date())) return null;
+  const bandMin = CAL_START_HOUR * 60;
+  const bandMaxExclusive = CAL_END_HOUR * 60;
+  const now = new Date();
+  const t = now.getHours() * 60 + now.getMinutes();
+  const snapped = Math.ceil(t / SNAP_MINUTES) * SNAP_MINUTES;
+  const v = Math.max(bandMin, snapped);
+  if (v >= bandMaxExclusive) return null;
+  return v;
+}
 
 /** Hairline every 15 minutes (full column height; hour borders stay stronger). */
 const QUARTER_GRID_STYLE: CSSProperties = {
@@ -410,6 +445,7 @@ type CalendarWeekGridProps = {
   firstLocationId: string;
   organizationId: string;
   onAddBooking: (day: Date, hour: number) => void;
+  onAddBookingRange: (day: Date, start: Date, end: Date) => void;
   onSelectBooking: (booking: any) => void;
   onSelectOrphanGcal: (ev: { id: string; summary: string; start: string; end: string }) => void;
 };
@@ -423,9 +459,44 @@ function CalendarWeekGrid({
   firstLocationId,
   organizationId,
   onAddBooking,
+  onAddBookingRange,
   onSelectBooking,
   onSelectOrphanGcal,
 }: CalendarWeekGridProps) {
+  const slotDragRef = useRef<{
+    dayKey: string;
+    pointerId: number;
+    startMin: number;
+    curMin: number;
+  } | null>(null);
+  const [slotDragUi, setSlotDragUi] = useState<NonNullable<typeof slotDragRef.current> | null>(null);
+
+  const flushDragFromPointer = (col: HTMLElement, e: PointerEvent) => {
+    const d = slotDragRef.current;
+    if (!d || d.pointerId !== e.pointerId) return;
+    slotDragRef.current = null;
+    setSlotDragUi(null);
+    try {
+      col.releasePointerCapture(e.pointerId);
+    } catch {
+      /* already released */
+    }
+    const lo = Math.min(d.startMin, d.curMin);
+    const hi = Math.max(d.startMin, d.curMin);
+    const span = hi - lo;
+    const day = weekDays.find((x) => format(x, "yyyy-MM-dd") === d.dayKey);
+    if (!day) return;
+    if (span < SNAP_MINUTES) {
+      const hour = Math.floor(lo / 60);
+      const cappedHour = Math.min(HOURS[HOURS.length - 1], Math.max(CAL_START_HOUR, hour));
+      if (cappedHour >= CAL_START_HOUR && cappedHour <= HOURS[HOURS.length - 1]) {
+        onAddBooking(day, cappedHour);
+      }
+    } else {
+      onAddBookingRange(day, dateFromDayMinutes(day, lo), dateFromDayMinutes(day, hi));
+    }
+  };
+
   return (
     <div className="w-full min-w-0 overflow-x-auto">
       <div className="min-w-[640px]">
@@ -490,13 +561,68 @@ function CalendarWeekGrid({
             }
             const laneByKey = assignOverlapLanes(overlapItems);
 
+            const dayKey = format(day, "yyyy-MM-dd");
+
             return (
               <div
                 key={day.toISOString()}
-                className={`relative min-w-0 border-l border-border bg-background ${
+                className={`relative min-w-0 select-none touch-manipulation border-l border-border bg-background ${
                   isSameDay(day, new Date()) ? "bg-primary/[0.06]" : ""
                 }`}
                 style={{ height: HOURS.length * HOUR_ROW_PX }}
+                onPointerDownCapture={(e) => {
+                  if (e.button !== 0) return;
+                  if (slotDragRef.current) return;
+                  const el = e.target as Element;
+                  if (el.closest("[data-calendar-event]")) return;
+                  const col = e.currentTarget;
+                  const rect = col.getBoundingClientRect();
+                  let y = e.clientY - rect.top;
+                  y = Math.max(0, Math.min(rect.height - 1e-3, y));
+                  let m = snappedMinutesFromY(y);
+                  if (isBandMinuteInPast(day, m)) {
+                    const fp = firstSnappedMinuteNotPast(day);
+                    if (fp == null) return;
+                    m = fp;
+                  }
+                  col.setPointerCapture(e.pointerId);
+                  const payload = { dayKey, pointerId: e.pointerId, startMin: m, curMin: m };
+                  slotDragRef.current = payload;
+                  setSlotDragUi(payload);
+                }}
+                onPointerMove={(e) => {
+                  const d = slotDragRef.current;
+                  if (!d || e.pointerId !== d.pointerId || d.dayKey !== dayKey) return;
+                  const col = e.currentTarget;
+                  const rect = col.getBoundingClientRect();
+                  let y = e.clientY - rect.top;
+                  y = Math.max(0, Math.min(rect.height - 1e-3, y));
+                  let m = snappedMinutesFromY(y);
+                  const fp = firstSnappedMinuteNotPast(day);
+                  if (fp != null) m = Math.max(m, fp);
+                  d.curMin = m;
+                  setSlotDragUi({ ...d });
+                }}
+                onPointerUp={(e) => {
+                  const d = slotDragRef.current;
+                  if (!d || d.dayKey !== dayKey) return;
+                  flushDragFromPointer(e.currentTarget, e);
+                }}
+                onPointerCancel={(e) => {
+                  const d = slotDragRef.current;
+                  if (!d || d.dayKey !== dayKey) return;
+                  slotDragRef.current = null;
+                  setSlotDragUi(null);
+                  try {
+                    e.currentTarget.releasePointerCapture(e.pointerId);
+                  } catch {
+                    /* ok */
+                  }
+                }}
+                onLostPointerCapture={() => {
+                  slotDragRef.current = null;
+                  setSlotDragUi(null);
+                }}
               >
                 <div className="pointer-events-none absolute inset-0 z-[1]" style={QUARTER_GRID_STYLE} aria-hidden />
                 {HOURS.map((hour) => {
@@ -509,21 +635,33 @@ function CalendarWeekGrid({
                       key={hour}
                       role={isPastSlot ? undefined : "button"}
                       tabIndex={isPastSlot ? undefined : 0}
-                      onClick={isPastSlot ? undefined : () => onAddBooking(day, hour)}
                       onKeyDown={
                         isPastSlot ? undefined : (e) => e.key === "Enter" && onAddBooking(day, hour)
                       }
                       style={{ top, height: HOUR_ROW_PX }}
-                      className={`absolute left-0 right-0 z-[2] box-border border-b border-border/90 p-1 ${
+                      className={`pointer-events-none absolute left-0 right-0 z-[2] box-border border-b border-border/90 p-1 ${
                         isPastSlot
                           ? "cursor-not-allowed bg-muted/30 opacity-70"
-                          : "cursor-pointer transition-colors hover:bg-muted/50 focus:outline-none focus:ring-1 focus:ring-ring focus:ring-inset"
+                          : "cursor-crosshair"
                       } ${isTodayCol && !isPastSlot ? "bg-primary/[0.07]" : ""} ${
                         isTodayCol && isPastSlot ? "bg-muted/25" : ""
                       }`}
                     />
                   );
                 })}
+                {slotDragUi?.dayKey === dayKey && (
+                  <div
+                    className="pointer-events-none absolute z-[25] rounded-sm border border-primary/50 bg-primary/20 left-0.5 right-0.5"
+                    style={{
+                      top: ((Math.min(slotDragUi.startMin, slotDragUi.curMin) - CAL_START_HOUR * 60) / 60) * HOUR_ROW_PX,
+                      height: Math.max(
+                        (SNAP_MINUTES / 60) * HOUR_ROW_PX,
+                        (Math.abs(slotDragUi.curMin - slotDragUi.startMin) / 60) * HOUR_ROW_PX,
+                      ),
+                    }}
+                    aria-hidden
+                  />
+                )}
                 <div className="pointer-events-none absolute inset-0 z-[3] overflow-visible">
                   {slots.map((s) => {
                     const endDate = new Date(s.end || s.start);
@@ -605,6 +743,7 @@ function CalendarWeekGrid({
                       <Tooltip key={getSlotKey(s)} delayDuration={300}>
                         <TooltipTrigger asChild>
                           <div
+                            data-calendar-event
                             role={isClickable ? "button" : undefined}
                             tabIndex={isClickable ? 0 : undefined}
                             style={{ ...cardStyle, ...(weekBlock.style ?? {}) }}
@@ -669,6 +808,7 @@ export default function CalendarPage() {
   const [currentWeek, setCurrentWeek] = useState(new Date());
   const [addBookingOpen, setAddBookingOpen] = useState(false);
   const [slotStart, setSlotStart] = useState<Date | null>(null);
+  const [slotEnd, setSlotEnd] = useState<Date | null>(null);
   const [refreshingAfterNavigate, setRefreshingAfterNavigate] = useState(false);
   const [selectedLocationId, setSelectedLocationId] = useState<string>("");
   const [selectedBooking, setSelectedBooking] = useState<any | null>(null);
@@ -788,6 +928,7 @@ export default function CalendarPage() {
   }, [organization?.id, gcalConnected]);
 
   const openAddBooking = (day?: Date, hour?: number) => {
+    setSlotEnd(null);
     if (day != null && hour != null) {
       const start = setMinutes(setHours(startOfDay(day), hour), 0);
       setSlotStart(start);
@@ -799,9 +940,16 @@ export default function CalendarPage() {
     setAddBookingOpen(true);
   };
 
+  const openAddBookingRange = (day: Date, start: Date, end: Date) => {
+    setSlotStart(start);
+    setSlotEnd(end);
+    setAddBookingOpen(true);
+  };
+
   const closeAddBooking = () => {
     setAddBookingOpen(false);
     setSlotStart(null);
+    setSlotEnd(null);
   };
 
   const isInitialLoading = bookingsLoading || (!!gcalConnected && gcalLoading);
@@ -918,6 +1066,7 @@ export default function CalendarPage() {
                     firstLocationId={firstLocationId}
                     organizationId={organization?.id ?? ""}
                     onAddBooking={(day, hour) => openAddBooking(day, hour)}
+                    onAddBookingRange={openAddBookingRange}
                     onSelectBooking={setSelectedBooking}
                     onSelectOrphanGcal={setSelectedOrphanGcalEvent}
                   />
@@ -943,6 +1092,7 @@ export default function CalendarPage() {
                     firstLocationId={firstLocationId}
                     organizationId={organization?.id ?? ""}
                     onAddBooking={(day, hour) => openAddBooking(day, hour)}
+                    onAddBookingRange={openAddBookingRange}
                     onSelectBooking={setSelectedBooking}
                     onSelectOrphanGcal={setSelectedOrphanGcalEvent}
                   />
@@ -997,6 +1147,7 @@ export default function CalendarPage() {
         }}
         organizationId={organization?.id ?? ""}
         initialStart={slotStart}
+        initialEnd={slotEnd}
         defaultLocationId={selectedLocationId}
         gcalConnected={!!gcalConnected}
         onSuccess={(bookingId) => {
@@ -1018,6 +1169,8 @@ type AddBookingDialogProps = {
   onOpenChange: (open: boolean) => void;
   organizationId: string;
   initialStart: Date | null;
+  /** When set with `initialStart`, booking end time follows this range (editable). */
+  initialEnd?: Date | null;
   defaultLocationId?: string;
   gcalConnected?: boolean;
   onSuccess: (bookingId?: string) => void;
@@ -1028,6 +1181,7 @@ function AddBookingDialog({
   onOpenChange,
   organizationId,
   initialStart,
+  initialEnd = null,
   defaultLocationId,
   gcalConnected,
   onSuccess,
@@ -1045,6 +1199,10 @@ function AddBookingDialog({
   const [startTime, setStartTime] = useState(() =>
     initialStart ? format(initialStart, "HH:mm") : format(new Date(Date.now() + 3600000), "HH:mm")
   );
+  const [endTime, setEndTime] = useState(() =>
+    initialEnd ? format(initialEnd, "HH:mm") : "10:00"
+  );
+  const [useCustomLength, setUseCustomLength] = useState(!!initialEnd);
   const [notes, setNotes] = useState("");
   const [customerSuggestionsOpen, setCustomerSuggestionsOpen] = useState(false);
   const customerName = [customerFirstName.trim(), customerLastName.trim()].filter(Boolean).join(" ").trim();
@@ -1067,16 +1225,23 @@ function AddBookingDialog({
   });
 
   useEffect(() => {
-    if (open && initialStart) {
+    if (!open) return;
+    if (initialStart) {
       setStartDate(new Date(initialStart));
       setStartTime(format(initialStart, "HH:mm"));
-    } else if (open && !initialStart) {
+    } else {
       const now = new Date();
       const next = new Date(now.getTime() + 3600000);
       setStartDate(now);
       setStartTime(format(next, "HH:mm"));
     }
-  }, [open, initialStart]);
+    if (initialEnd) {
+      setEndTime(format(initialEnd, "HH:mm"));
+      setUseCustomLength(true);
+    } else {
+      setUseCustomLength(false);
+    }
+  }, [open, initialStart, initialEnd]);
 
   useEffect(() => {
     if (open && defaultLocationId) setLocationId(defaultLocationId);
@@ -1097,6 +1262,8 @@ function AddBookingDialog({
       const next = new Date(now.getTime() + 3600000);
       setStartDate(now);
       setStartTime(format(next, "HH:mm"));
+      setEndTime("10:00");
+      setUseCustomLength(false);
     }
   }, [open]);
 
@@ -1170,8 +1337,15 @@ function AddBookingDialog({
       const [h, m] = startTime.split(":").map(Number);
       const start = new Date(startDate);
       start.setHours(h, m, 0, 0);
-      const duration = selectedService?.duration_minutes ?? 30;
-      const end = new Date(start.getTime() + duration * 60000);
+      let end: Date;
+      if (useCustomLength) {
+        const [eh, em] = endTime.split(":").map(Number);
+        end = new Date(startDate);
+        end.setHours(eh, em, 0, 0);
+      } else {
+        const duration = selectedService?.duration_minutes ?? 30;
+        end = new Date(start.getTime() + duration * 60000);
+      }
 
       const { data, error } = await supabase
         .from("bookings")
@@ -1236,6 +1410,19 @@ function AddBookingDialog({
     if (isBefore(start, new Date())) {
       toast({ title: "Start time must be in the future", variant: "destructive" });
       return;
+    }
+    if (useCustomLength) {
+      const [eh, em] = endTime.split(":").map(Number);
+      const end = new Date(startDate);
+      end.setHours(eh, em, 0, 0);
+      if (end.getTime() <= start.getTime()) {
+        toast({ title: "End time must be after start time", variant: "destructive" });
+        return;
+      }
+      if (differenceInMinutes(end, start) < 15) {
+        toast({ title: "Appointment must be at least 15 minutes long", variant: "destructive" });
+        return;
+      }
     }
     createMutation.mutate();
   };
@@ -1417,6 +1604,15 @@ function AddBookingDialog({
             <Label>Time</Label>
             <Input type="time" value={startTime} onChange={(e) => setStartTime(e.target.value)} min={minTime} />
           </div>
+          {useCustomLength && (
+            <div className="grid gap-2">
+              <Label>End time</Label>
+              <p className="text-xs text-muted-foreground -mt-1">
+                Length is taken from your selection (not the service duration). You can adjust before saving.
+              </p>
+              <Input type="time" value={endTime} onChange={(e) => setEndTime(e.target.value)} />
+            </div>
+          )}
           <div className="grid gap-2">
             <Label>Notes (optional)</Label>
             <Input

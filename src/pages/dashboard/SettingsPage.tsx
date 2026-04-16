@@ -81,8 +81,8 @@ export default function SettingsPage() {
       toast({
         title: "Salon data reset",
         description: data?.slug
-          ? `Your booking link changed to use slug “${data.slug}”. Complete the setup prompts to add services and staff again.`
-          : "Your salon was cleared. Use the setup prompts to add services and staff again.",
+          ? `Your booking link changed to use slug “${data.slug}”. Follow the setup wizard to add your location, services, and staff again.`
+          : "Your salon was cleared. Follow the setup wizard to add your location, services, and staff again.",
       });
     },
     onError: (err: unknown) =>

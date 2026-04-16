@@ -9,7 +9,6 @@ const corsHeaders = {
   "Access-Control-Max-Age": "86400",
 };
 
-// Verify custom JWT and extract user ID
 async function verifyCustomJWT(token: string): Promise<{ sub: string; email: string } | null> {
   try {
     const secret = Deno.env.get("JWT_SECRET");
@@ -20,12 +19,15 @@ async function verifyCustomJWT(token: string): Promise<{ sub: string; email: str
 
     const encoder = new TextEncoder();
     const key = await crypto.subtle.importKey(
-      "raw", encoder.encode(secret),
-      { name: "HMAC", hash: "SHA-256" }, false, ["verify"]
+      "raw",
+      encoder.encode(secret),
+      { name: "HMAC", hash: "SHA-256" },
+      false,
+      ["verify"],
     );
 
     const data = encoder.encode(`${parts[0]}.${parts[1]}`);
-    const sig = Uint8Array.from(atob(parts[2].replace(/-/g, "+").replace(/_/g, "/")), c => c.charCodeAt(0));
+    const sig = Uint8Array.from(atob(parts[2].replace(/-/g, "+").replace(/_/g, "/")), (c) => c.charCodeAt(0));
     const valid = await crypto.subtle.verify("HMAC", key, sig, data);
     if (!valid) return null;
 
@@ -65,8 +67,10 @@ Deno.serve(async (req) => {
     const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const adminClient = createClient(supabaseUrl, serviceRoleKey);
 
-    // Check super_admin role
-    const { data: hasRole } = await adminClient.rpc("has_role", { _user_id: caller.sub, _role: "super_admin" });
+    const { data: hasRole } = await adminClient.rpc("has_role", {
+      _user_id: caller.sub,
+      _role: "super_admin",
+    });
     if (!hasRole) {
       return new Response(JSON.stringify({ error: "Forbidden: super_admin required" }), {
         status: 403,
@@ -74,50 +78,30 @@ Deno.serve(async (req) => {
       });
     }
 
-    const { user_id } = await req.json();
-    if (!user_id) {
-      return new Response(JSON.stringify({ error: "user_id required" }), {
+    const { organization_id } = await req.json();
+    if (!organization_id || typeof organization_id !== "string") {
+      return new Response(JSON.stringify({ error: "organization_id required" }), {
         status: 400,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
 
-    // Organizations no longer FK-cascade from app_users (custom auth). Remove tenant data first.
-    const { data: ownedOrgs, error: orgListErr } = await adminClient
-      .from("organizations")
-      .select("id")
-      .eq("owner_id", user_id);
-    if (orgListErr) {
-      return new Response(JSON.stringify({ error: orgListErr.message }), {
+    await deleteOrganizationScopedData(adminClient, organization_id);
+
+    const { error: delOrgErr } = await adminClient.from("organizations").delete().eq("id", organization_id);
+    if (delOrgErr) {
+      return new Response(JSON.stringify({ error: delOrgErr.message }), {
         status: 500,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
-    for (const row of ownedOrgs ?? []) {
-      const orgId = row.id as string;
-      await deleteOrganizationScopedData(adminClient, orgId);
-      const { error: delOrgErr } = await adminClient.from("organizations").delete().eq("id", orgId);
-      if (delOrgErr) {
-        return new Response(JSON.stringify({ error: delOrgErr.message }), {
-          status: 500,
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-        });
-      }
-    }
-
-    // Unlink this login from any staff row (e.g. invited stylist at another salon)
-    await adminClient.from("staff").update({ user_id: null }).eq("user_id", user_id);
-
-    await adminClient.from("google_calendar_tokens").delete().eq("user_id", user_id);
-    await adminClient.from("user_roles").delete().eq("user_id", user_id);
-    await adminClient.from("profiles").delete().eq("id", user_id);
-    await adminClient.from("app_users").delete().eq("id", user_id);
 
     return new Response(JSON.stringify({ success: true }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   } catch (err) {
-    return new Response(JSON.stringify({ error: err.message }), {
+    const msg = err instanceof Error ? err.message : String(err);
+    return new Response(JSON.stringify({ error: msg }), {
       status: 500,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });

@@ -1,4 +1,5 @@
 import { useState, useMemo } from "react";
+import { usePlanDefinitions } from "@/hooks/usePlanDefinitions";
 import { cn } from "@/lib/utils";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
@@ -28,13 +29,7 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 
-type OrgTier = "tier_1" | "tier_2" | "tier_3";
-
-const TIER_LABELS: Record<OrgTier, string> = {
-  tier_1: "Tier 1 (1 location)",
-  tier_2: "Tier 2 (10 locations)",
-  tier_3: "Tier 3 (100 locations)",
-};
+import { tierLabelWithLimit, type OrgTier } from "@/lib/tierLimits";
 
 /** One row = one salon (organization) created by a tenant, with owner info */
 interface SalonRow {
@@ -60,6 +55,16 @@ export default function SuperAdminAccounts() {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [bulkTierOpen, setBulkTierOpen] = useState(false);
   const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
+
+  const { data: planDefinitions = [] } = usePlanDefinitions();
+  const tierSelectLabels = useMemo(
+    () => ({
+      tier_1: tierLabelWithLimit("tier_1", planDefinitions),
+      tier_2: tierLabelWithLimit("tier_2", planDefinitions),
+      tier_3: tierLabelWithLimit("tier_3", planDefinitions),
+    }),
+    [planDefinitions]
+  );
 
   const { data: approvedUserIds = [] } = useQuery({
     queryKey: ["admin-approved-user-ids"],
@@ -213,8 +218,8 @@ export default function SuperAdminAccounts() {
     mutationFn: async () => {
       const orgIds = Array.from(selectedIds);
       for (const orgId of orgIds) {
-        const { error: delOrgErr } = await supabase.from("organizations").delete().eq("id", orgId);
-        if (delOrgErr) throw delOrgErr;
+        const res = await invokeFunction("admin-delete-organization", { organization_id: orgId });
+        if (res?.error) throw new Error(res.error);
       }
       const ownerIds = [...new Set(selectedSalons.map((s) => s.owner_id))];
       for (const userId of ownerIds) {
@@ -268,8 +273,8 @@ export default function SuperAdminAccounts() {
 
   const deleteSalon = useMutation({
     mutationFn: async (salon: SalonRow) => {
-      const { error: delOrgErr } = await supabase.from("organizations").delete().eq("id", salon.id);
-      if (delOrgErr) throw delOrgErr;
+      const res = await invokeFunction("admin-delete-organization", { organization_id: salon.id });
+      if (res?.error) throw new Error(res.error);
       await invokeFunction("admin-delete-user", { user_id: salon.owner_id });
     },
     onSuccess: () => {
@@ -371,9 +376,9 @@ export default function SuperAdminAccounts() {
                   <Select name="tier" defaultValue="tier_1">
                     <SelectTrigger><SelectValue /></SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="tier_1">{TIER_LABELS.tier_1}</SelectItem>
-                      <SelectItem value="tier_2">{TIER_LABELS.tier_2}</SelectItem>
-                      <SelectItem value="tier_3">{TIER_LABELS.tier_3}</SelectItem>
+                      <SelectItem value="tier_1">{tierSelectLabels.tier_1}</SelectItem>
+                      <SelectItem value="tier_2">{tierSelectLabels.tier_2}</SelectItem>
+                      <SelectItem value="tier_3">{tierSelectLabels.tier_3}</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
@@ -419,7 +424,7 @@ export default function SuperAdminAccounts() {
                         {bulkChangeTier.isPending ? (
                           <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                         ) : null}
-                        {TIER_LABELS[tier]}
+                        {tierSelectLabels[tier]}
                       </Button>
                     ))}
                   </div>
@@ -479,9 +484,9 @@ export default function SuperAdminAccounts() {
                 <Select name="tier" defaultValue={editSalon.tier || "tier_1"}>
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="tier_1">{TIER_LABELS.tier_1}</SelectItem>
-                    <SelectItem value="tier_2">{TIER_LABELS.tier_2}</SelectItem>
-                    <SelectItem value="tier_3">{TIER_LABELS.tier_3}</SelectItem>
+                    <SelectItem value="tier_1">{tierSelectLabels.tier_1}</SelectItem>
+                    <SelectItem value="tier_2">{tierSelectLabels.tier_2}</SelectItem>
+                    <SelectItem value="tier_3">{tierSelectLabels.tier_3}</SelectItem>
                   </SelectContent>
                 </Select>
               </div>

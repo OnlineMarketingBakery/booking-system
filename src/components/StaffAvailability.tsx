@@ -44,6 +44,8 @@ type WeekSchedule = Record<number, DaySchedule>;
 interface StaffAvailabilityProps {
   staffId: string;
   staffName: string;
+  /** When set from a parent header (e.g. dialog), use a neutral card title */
+  titleMode?: "default" | "scheduleOnly";
 }
 
 function buildScheduleFromData(data: any[]): WeekSchedule {
@@ -67,7 +69,7 @@ function buildScheduleFromData(data: any[]): WeekSchedule {
   return schedule;
 }
 
-export function StaffAvailability({ staffId, staffName }: StaffAvailabilityProps) {
+export function StaffAvailability({ staffId, staffName, titleMode = "default" }: StaffAvailabilityProps) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [schedule, setSchedule] = useState<WeekSchedule>(() => {
@@ -227,7 +229,7 @@ export function StaffAvailability({ staffId, staffName }: StaffAvailabilityProps
         <div className="flex items-center justify-between">
           <CardTitle className="flex items-center gap-2 text-base">
             <Clock className="h-4 w-4 text-primary" />
-            {staffName} — Working Hours
+            {titleMode === "scheduleOnly" ? "Weekly schedule" : `${staffName} — Working hours`}
           </CardTitle>
           {hasChanges && (
             <Button

@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Link } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useOrganization } from "@/hooks/useOrganization";
@@ -6,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -19,11 +20,14 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useToast } from "@/hooks/use-toast";
+import { getErrorMessage } from "@/lib/errorMessage";
 import { useSpamProtection } from "@/hooks/useSpamProtection";
 import { SpamProtectionFields } from "@/components/SpamProtectionFields";
-import { Plus, Users, Loader2, KeyRound, MapPin, Pencil, UserX, RotateCcw } from "lucide-react";
+import { Plus, Users, Loader2, KeyRound, MapPin, Pencil, UserX, RotateCcw, Clock } from "lucide-react";
 import { StaffLocationAssignment } from "@/components/StaffLocationAssignment";
+import { StaffAvailability } from "@/components/StaffAvailability";
 import { reassignBookingsAndOrgDefaultThenDeactivate } from "@/lib/staffReassignment";
 
 export default function Staff() {
@@ -39,6 +43,7 @@ export default function Staff() {
   } | null>(null);
   const [selectedLocationId, setSelectedLocationId] = useState("");
   const [staffToDeactivate, setStaffToDeactivate] = useState<{ id: string; name: string } | null>(null);
+  const [hoursForStaff, setHoursForStaff] = useState<{ id: string; name: string } | null>(null);
   const { validateSpamProtection, SpamProtectionFieldsProps } = useSpamProtection();
 
   const { data: locations = [] } = useQuery({
@@ -105,17 +110,25 @@ export default function Staff() {
         if (locError) throw locError;
       }
 
-      if (organization?.owner_default_staff_id && newStaff?.id) {
-        const { data: cur } = await supabase
-          .from("staff")
-          .select("is_owner_placeholder")
-          .eq("id", organization.owner_default_staff_id)
-          .maybeSingle();
-        if (cur?.is_owner_placeholder) {
+      if (newStaff?.id && organization) {
+        const defId = organization.owner_default_staff_id;
+        if (!defId) {
           await supabase
             .from("organizations")
             .update({ owner_default_staff_id: newStaff.id })
             .eq("id", organization.id);
+        } else {
+          const { data: cur } = await supabase
+            .from("staff")
+            .select("is_owner_placeholder")
+            .eq("id", defId)
+            .maybeSingle();
+          if (cur?.is_owner_placeholder) {
+            await supabase
+              .from("organizations")
+              .update({ owner_default_staff_id: newStaff.id })
+              .eq("id", organization.id);
+          }
         }
       }
 
@@ -129,7 +142,8 @@ export default function Staff() {
       setSelectedLocationId("");
       toast({ title: "Staff member added" });
     },
-    onError: (err: any) => toast({ title: "Error", description: err.message, variant: "destructive" }),
+    onError: (err: unknown) =>
+      toast({ title: "Error", description: getErrorMessage(err, "Could not add staff."), variant: "destructive" }),
   });
 
   const updateStaff = useMutation({
@@ -159,7 +173,8 @@ export default function Staff() {
       setEditingStaff(null);
       toast({ title: "Staff updated" });
     },
-    onError: (err: any) => toast({ title: "Error", description: err.message, variant: "destructive" }),
+    onError: (err: unknown) =>
+      toast({ title: "Error", description: getErrorMessage(err, "Could not update staff."), variant: "destructive" }),
   });
 
   const deactivateStaff = useMutation({
@@ -181,7 +196,7 @@ export default function Staff() {
     onError: (err: unknown) =>
       toast({
         title: "Error",
-        description: err instanceof Error ? err.message : "Could not deactivate staff.",
+        description: getErrorMessage(err, "Could not deactivate staff."),
         variant: "destructive",
       }),
   });
@@ -203,7 +218,7 @@ export default function Staff() {
     onError: (err: unknown) =>
       toast({
         title: "Error",
-        description: err instanceof Error ? err.message : "Could not reactivate staff.",
+        description: getErrorMessage(err, "Could not reactivate staff."),
         variant: "destructive",
       }),
   });
@@ -240,7 +255,14 @@ export default function Staff() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold tracking-tight">Staff</h1>
-          <p className="text-muted-foreground">Manage your team and location assignments</p>
+          <p className="text-muted-foreground">
+            Manage your team and location assignments.{" "}
+            <Link to="/dashboard/settings/holidays" className="text-primary underline-offset-4 hover:underline">
+              Holidays & closures
+            </Link>
+            {" — "}
+            <span className="text-muted-foreground">use the clock on a card for weekly working hours.</span>
+          </p>
         </div>
         <Dialog open={open} onOpenChange={(o) => { setOpen(o); if (!o) setSelectedLocationId(""); }}>
           <DialogTrigger asChild>
@@ -323,6 +345,29 @@ export default function Staff() {
         </AlertDialogContent>
       </AlertDialog>
 
+      <Dialog open={!!hoursForStaff} onOpenChange={(o) => !o && setHoursForStaff(null)}>
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto sm:max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Working hours{hoursForStaff ? ` — ${hoursForStaff.name}` : ""}</DialogTitle>
+            <DialogDescription>
+              Set when this person is bookable. Online slots only appear when these times overlap an assigned location’s
+              opening hours (edit the location to change those). Region-wide holidays and custom closures:{" "}
+              <Link
+                to="/dashboard/settings/holidays"
+                className="font-medium text-primary underline-offset-4 hover:underline"
+                onClick={() => setHoursForStaff(null)}
+              >
+                Holidays & closures
+              </Link>
+              .
+            </DialogDescription>
+          </DialogHeader>
+          {hoursForStaff ? (
+            <StaffAvailability staffId={hoursForStaff.id} staffName={hoursForStaff.name} titleMode="scheduleOnly" />
+          ) : null}
+        </DialogContent>
+      </Dialog>
+
       <Dialog open={!!editingStaff} onOpenChange={(o) => !o && setEditingStaff(null)}>
         <DialogContent>
           <DialogHeader><DialogTitle>Edit Staff Member</DialogTitle></DialogHeader>
@@ -400,30 +445,70 @@ export default function Staff() {
                       </div>
                     </div>
                     <div className="flex items-center gap-1">
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        onClick={() =>
-                          setEditingStaff({
-                            id: s.id,
-                            name: s.name,
-                            phone: s.phone,
-                            email: (s as { email?: string | null }).email ?? null,
-                          })
-                        }
-                        aria-label="Edit staff"
-                      >
-                        <Pencil className="h-4 w-4 text-muted-foreground" />
-                      </Button>
-                      <Button
-                        className="hover:bg-destructive/10"
-                        variant="ghost"
-                        size="icon"
-                        onClick={() => setStaffToDeactivate({ id: s.id, name: s.name })}
-                        aria-label="Deactivate staff"
-                      >
-                        <UserX className="h-4 w-4 text-destructive" />
-                      </Button>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => setHoursForStaff({ id: s.id, name: s.name })}
+                            aria-label="Working hours"
+                          >
+                            <Clock className="h-4 w-4 text-muted-foreground" />
+                          </Button>
+                        </TooltipTrigger>
+                        <TooltipContent>Weekly working hours</TooltipContent>
+                      </Tooltip>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={() =>
+                              setEditingStaff({
+                                id: s.id,
+                                name: s.name,
+                                phone: s.phone,
+                                email: (s as { email?: string | null }).email ?? null,
+                              })
+                            }
+                            aria-label="Edit staff"
+                          >
+                            <Pencil className="h-4 w-4 text-muted-foreground" />
+                          </Button>
+                        </TooltipTrigger>
+                        <TooltipContent>Edit name and contact details</TooltipContent>
+                      </Tooltip>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <span className={activeTeam.length <= 1 ? "inline-flex cursor-not-allowed" : ""}>
+                            <Button
+                              className={`hover:bg-destructive/10 ${activeTeam.length <= 1 ? "pointer-events-none opacity-50" : ""}`}
+                              variant="ghost"
+                              size="icon"
+                              disabled={activeTeam.length <= 1}
+                              onClick={() => {
+                                if (activeTeam.length <= 1) {
+                                  toast({
+                                    title: "Cannot deactivate",
+                                    description: "You need at least one active team member to use your account.",
+                                    variant: "destructive",
+                                  });
+                                  return;
+                                }
+                                setStaffToDeactivate({ id: s.id, name: s.name });
+                              }}
+                              aria-label="Deactivate staff"
+                            >
+                              <UserX className="h-4 w-4 text-destructive" />
+                            </Button>
+                          </span>
+                        </TooltipTrigger>
+                        <TooltipContent className="max-w-xs">
+                          {activeTeam.length <= 1
+                            ? "You need at least one active team member to use your account."
+                            : "Remove from the public booking flow; bookings can be reassigned automatically."}
+                        </TooltipContent>
+                      </Tooltip>
                     </div>
                   </CardHeader>
                   <CardContent className="pt-0">

@@ -51,6 +51,48 @@ import {
   type OccupancyRow,
 } from "@/lib/slotStartCapacity";
 import { BOOKING_SLOT_GRID_MINUTES } from "@/lib/bookingSlotConstants";
+import { getErrorMessage } from "@/lib/errorMessage";
+import { AddToCalendarButtons } from "@/components/AddToCalendarButtons";
+import type { CalendarEventInput } from "@/lib/calendarLinks";
+
+const WIDGET_BOOKING_CAL_KEY = "salonora_widget_booking_cal_v1";
+
+function persistWidgetBookingCal(payload: {
+  title: string;
+  description?: string;
+  location?: string;
+  start: string;
+  end: string;
+}) {
+  try {
+    sessionStorage.setItem(WIDGET_BOOKING_CAL_KEY, JSON.stringify(payload));
+  } catch {
+    // ignore
+  }
+}
+
+function readStoredWidgetCal(): CalendarEventInput | null {
+  try {
+    const raw = sessionStorage.getItem(WIDGET_BOOKING_CAL_KEY);
+    if (!raw) return null;
+    const j = JSON.parse(raw) as {
+      title: string;
+      description?: string;
+      location?: string;
+      start: string;
+      end: string;
+    };
+    return {
+      title: j.title,
+      description: j.description,
+      location: j.location,
+      start: new Date(j.start),
+      end: new Date(j.end),
+    };
+  } catch {
+    return null;
+  }
+}
 
 function eligibleStaffIdsForWallSlot(
   activeStaffAtLocation: Set<string>,
@@ -605,7 +647,7 @@ export default function BookingPage() {
         const d = data as { error?: string } | null | undefined;
         toast({
           title: "Boeking mislukt",
-          description: d?.error?.trim() || error.message,
+          description: d?.error?.trim() || getErrorMessage(error, "Request failed."),
           variant: "destructive",
         });
         return;
@@ -627,6 +669,21 @@ export default function BookingPage() {
             // ignore
           }
         }
+        const totalMin = selectedServiceObjects.reduce(
+          (sum, s) => sum + (Number(s.duration_minutes) || 30),
+          0,
+        );
+        const loc = locations.find((l) => l.id === selectedLocation);
+        persistWidgetBookingCal({
+          title: `${(org as { name?: string })?.name ?? "Salon"}: ${selectedServiceObjects.map((s) => s.name).join(", ")} (pending email confirmation)`,
+          description:
+            "Confirm your appointment using the link we sent to your email. This calendar entry is tentative until you confirm.",
+          location: loc
+            ? `${loc.name}${(loc as { address?: string | null }).address ? `, ${(loc as { address?: string | null }).address}` : ""}`
+            : undefined,
+          start: startTime.toISOString(),
+          end: addMinutes(startTime, totalMin).toISOString(),
+        });
         setStep("confirm_email_sent");
         return;
       }
@@ -647,6 +704,20 @@ export default function BookingPage() {
             // ignore
           }
         }
+        const totalMin = selectedServiceObjects.reduce(
+          (sum, s) => sum + (Number(s.duration_minutes) || 30),
+          0,
+        );
+        const loc = locations.find((l) => l.id === selectedLocation);
+        persistWidgetBookingCal({
+          title: `${(org as { name?: string })?.name ?? "Salon"}: ${selectedServiceObjects.map((s) => s.name).join(", ")}`,
+          description: "Your appointment is confirmed.",
+          location: loc
+            ? `${loc.name}${(loc as { address?: string | null }).address ? `, ${(loc as { address?: string | null }).address}` : ""}`
+            : undefined,
+          start: startTime.toISOString(),
+          end: addMinutes(startTime, totalMin).toISOString(),
+        });
         setStep("confirmed");
         return;
       }
@@ -669,10 +740,10 @@ export default function BookingPage() {
         }
         window.location.href = data.url;
       }
-    } catch (err: any) {
+    } catch (err: unknown) {
       toast({
         title: "Booking failed",
-        description: err.message,
+        description: getErrorMessage(err, "Something went wrong."),
         variant: "destructive",
       });
     } finally {
@@ -713,17 +784,57 @@ export default function BookingPage() {
   }
 
   if (step === "confirmed") {
+    const cal = readStoredWidgetCal();
+    const summaryLine =
+      cal?.title?.includes(": ") ? cal.title.split(": ").slice(1).join(": ") : cal?.title ?? "Appointment";
     return (
-      <div className="flex min-h-screen items-center justify-center bg-muted/30 px-4">
-        <Card className="w-full max-w-md text-center">
-          <CardContent className="py-12 space-y-4">
-            <CheckCircle2 className="mx-auto h-16 w-16 text-primary" />
-            <h2 className="text-2xl font-bold">Booking Confirmed!</h2>
-            <p className="text-muted-foreground">
-              You'll receive a confirmation email shortly.
-            </p>
-            <Button onClick={()=>window.location.reload()}>Go Back To Booking Page
-            </Button>
+      <div className="flex min-h-screen items-center justify-center bg-muted/30 px-4 py-8">
+        <Card className="w-full max-w-lg border-primary/15 shadow-sm">
+          <CardContent className="space-y-6 py-10 px-6 sm:px-10">
+            <div className="flex flex-col items-center gap-3 text-center sm:flex-row sm:text-left">
+              <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-full bg-primary/10">
+                <CheckCircle2 className="h-8 w-8 text-primary" />
+              </div>
+              <div>
+                <h2 className="text-2xl font-bold tracking-tight">See you soon!</h2>
+                <p className="text-muted-foreground text-sm">
+                  Your appointment is confirmed. You will also receive a confirmation email with calendar links.
+                </p>
+              </div>
+            </div>
+            {cal ? (
+              <div className="rounded-xl border bg-muted/40 p-4 sm:p-5">
+                <div className="grid gap-4 sm:grid-cols-2 sm:divide-x sm:divide-border">
+                  <div className="space-y-1 text-center sm:pr-4 sm:text-left">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">When</p>
+                    <p className="text-lg font-semibold">{format(cal.start, "MMMM d")}</p>
+                    <p className="text-sm text-muted-foreground">{format(cal.start, "EEEE")}</p>
+                    <p className="flex items-center justify-center gap-1.5 text-sm text-muted-foreground sm:justify-start">
+                      <Clock className="h-4 w-4 shrink-0" />
+                      {format(cal.start, "HH:mm")}
+                      {" – "}
+                      {format(cal.end, "HH:mm")}
+                    </p>
+                  </div>
+                  <div className="space-y-1 text-center sm:pl-4 sm:text-left">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Details</p>
+                    <p className="font-medium leading-snug">{summaryLine}</p>
+                    {cal.location ? (
+                      <p className="flex items-start justify-center gap-1.5 text-sm text-muted-foreground sm:justify-start">
+                        <MapPin className="mt-0.5 h-4 w-4 shrink-0" />
+                        {cal.location}
+                      </p>
+                    ) : null}
+                  </div>
+                </div>
+              </div>
+            ) : null}
+            {cal ? <AddToCalendarButtons event={cal} icsFileName="salon-appointment" /> : null}
+            <div className="flex justify-center">
+              <Button variant="outline" className="min-w-[200px]" onClick={() => window.location.reload()}>
+                Book another appointment
+              </Button>
+            </div>
           </CardContent>
         </Card>
       </div>
@@ -731,15 +842,61 @@ export default function BookingPage() {
   }
 
   if (step === "confirm_email_sent") {
+    const cal = readStoredWidgetCal();
+    const summaryLine =
+      cal?.title?.includes(": ") ? cal.title.split(": ").slice(1).join(": ") : cal?.title ?? "Requested appointment";
     return (
-      <div className="flex min-h-screen items-center justify-center bg-muted/30 px-4">
-        <Card className="w-full max-w-md text-center">
-          <CardContent className="py-12 space-y-4">
-            <Calendar className="mx-auto h-16 w-16 text-primary" />
-            <h2 className="text-2xl font-bold">Check your email</h2>
-            <p className="text-muted-foreground">
-              We've sent you a link to confirm your booking. Click the link in the email to complete your appointment. The link expires in 24 hours.
-            </p>
+      <div className="flex min-h-screen items-center justify-center bg-muted/30 px-4 py-8">
+        <Card className="w-full max-w-lg border-primary/15 shadow-sm">
+          <CardContent className="space-y-6 py-10 px-6 sm:px-10">
+            <div className="flex flex-col items-center gap-3 text-center">
+              <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-full bg-primary/10">
+                <Calendar className="h-8 w-8 text-primary" />
+              </div>
+              <h2 className="text-2xl font-bold tracking-tight">Check your email</h2>
+              <p className="text-muted-foreground text-sm max-w-md">
+                We have sent you a link to confirm your booking. Open the email and tap the button to complete your
+                appointment. The link expires in 24 hours. Your confirmation email will include calendar options again
+                once you confirm.
+              </p>
+            </div>
+            {cal ? (
+              <>
+                <div className="rounded-xl border border-dashed bg-muted/30 p-4 sm:p-5">
+                  <p className="mb-3 text-center text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                    Requested time (tentative)
+                  </p>
+                  <div className="grid gap-4 sm:grid-cols-2 sm:divide-x sm:divide-border">
+                    <div className="space-y-1 text-center sm:pr-4 sm:text-left">
+                      <p className="text-lg font-semibold">{format(cal.start, "MMMM d")}</p>
+                      <p className="text-sm text-muted-foreground">{format(cal.start, "EEEE")}</p>
+                      <p className="flex items-center justify-center gap-1.5 text-sm text-muted-foreground sm:justify-start">
+                        <Clock className="h-4 w-4 shrink-0" />
+                        {format(cal.start, "HH:mm")} – {format(cal.end, "HH:mm")}
+                      </p>
+                    </div>
+                    <div className="space-y-1 text-center sm:pl-4 sm:text-left">
+                      <p className="font-medium leading-snug">{summaryLine}</p>
+                      {cal.location ? (
+                        <p className="flex items-start justify-center gap-1.5 text-sm text-muted-foreground sm:justify-start">
+                          <MapPin className="mt-0.5 h-4 w-4 shrink-0" />
+                          {cal.location}
+                        </p>
+                      ) : null}
+                    </div>
+                  </div>
+                </div>
+                <AddToCalendarButtons event={cal} icsFileName="salon-appointment-tentative" />
+                <p className="text-center text-xs text-muted-foreground">
+                  Optional reminder — your slot is held until you confirm by email.
+                </p>
+              </>
+            ) : null}
+            <div className="flex justify-center">
+              <Button variant="outline" onClick={() => window.location.reload()}>
+                Back to booking
+              </Button>
+            </div>
           </CardContent>
         </Card>
       </div>

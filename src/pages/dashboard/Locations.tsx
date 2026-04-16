@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { Link } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useOrganization } from "@/hooks/useOrganization";
@@ -7,7 +8,11 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useToast } from "@/hooks/use-toast";
+import { usePlanDefinitions } from "@/hooks/usePlanDefinitions";
+import { maxLocationsForTier } from "@/lib/tierLimits";
+import { getErrorMessage } from "@/lib/errorMessage";
 import { useSpamProtection } from "@/hooks/useSpamProtection";
 import { SpamProtectionFields } from "@/components/SpamProtectionFields";
 import { Plus, MapPin, Trash2, Loader2, Clock, Pencil } from "lucide-react";
@@ -18,12 +23,6 @@ import {
   type WeekSchedule,
 } from "@/components/LocationHoursForm";
 import { DAYS_LIST } from "@/components/LocationHoursForm";
-
-const TIER_LIMITS: Record<string, number> = {
-  tier_1: 1,
-  tier_2: 10,
-  tier_3: 100,
-};
 
 export default function Locations() {
   const { organization } = useOrganization();
@@ -37,8 +36,9 @@ export default function Locations() {
   const [schedule, setSchedule] = useState<WeekSchedule>(getEmptySchedule);
   const { validateSpamProtection, SpamProtectionFieldsProps } = useSpamProtection();
 
-  const tier = (organization as any)?.tier as string | undefined;
-  const maxLocations = TIER_LIMITS[tier || "tier_1"] ?? 1;
+  const tier = (organization as { tier?: string } | null)?.tier;
+  const { data: planDefinitions = [] } = usePlanDefinitions();
+  const maxLocations = maxLocationsForTier(tier, planDefinitions);
 
   const { data: locations = [], isLoading } = useQuery({
     queryKey: ["locations", organization?.id],
@@ -54,6 +54,8 @@ export default function Locations() {
     },
     enabled: !!organization,
   });
+
+  const atLocationCap = locations.length >= maxLocations;
 
   const { data: editAvailability = [] } = useQuery({
     queryKey: ["location-availability", editingLocation?.id],
@@ -179,11 +181,13 @@ export default function Locations() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["locations"] });
       queryClient.invalidateQueries({ queryKey: ["location-availability"] });
+      queryClient.invalidateQueries({ queryKey: ["organization-audit-log"] });
       setDialogOpen(false);
       setEditingLocation(null);
       toast({ title: editingLocation ? "Location updated" : "Location added" });
     },
-    onError: (err: Error) => toast({ title: "Error", description: err.message, variant: "destructive" }),
+    onError: (err: unknown) =>
+      toast({ title: "Error", description: getErrorMessage(err, "Could not save location."), variant: "destructive" }),
   });
 
   const deleteLocation = useMutation({
@@ -198,7 +202,7 @@ export default function Locations() {
     onError: (err: unknown) =>
       toast({
         title: "Error",
-        description: err instanceof Error ? err.message : "Could not remove location.",
+        description: getErrorMessage(err, "Could not remove location."),
         variant: "destructive",
       }),
   });
@@ -215,15 +219,43 @@ export default function Locations() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold tracking-tight">Locations</h1>
-          <p className="text-muted-foreground">Manage your salon locations ({locations.length}/{maxLocations})</p>
+          <p className="text-muted-foreground">
+            Manage your salon locations ({locations.length}/{maxLocations})
+            {atLocationCap ? (
+              <>
+                {" "}
+                ·{" "}
+                <Link to="/dashboard/settings/plans" className="text-primary underline-offset-4 hover:underline">
+                  View plan & limits
+                </Link>
+              </>
+            ) : null}
+            {" · "}
+            <Link to="/dashboard/settings/holidays" className="text-primary underline-offset-4 hover:underline">
+              Holidays & closures
+            </Link>
+          </p>
         </div>
-        <Button disabled={locations.length >= maxLocations} onClick={openAdd}>
-          <Plus className="mr-2 h-4 w-4" />
-          Add Location
-        </Button>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <span className={atLocationCap ? "inline-flex cursor-not-allowed" : ""}>
+              <Button disabled={atLocationCap} onClick={openAdd} className={atLocationCap ? "pointer-events-none opacity-60" : ""}>
+                <Plus className="mr-2 h-4 w-4" />
+                Add Location
+              </Button>
+            </span>
+          </TooltipTrigger>
+          {atLocationCap ? (
+            <TooltipContent side="left" className="max-w-xs">
+              Your plan allows {maxLocations} active location{maxLocations === 1 ? "" : "s"}. Open Settings → Plan & limits to see tiers or contact support to upgrade.
+            </TooltipContent>
+          ) : (
+            <TooltipContent side="left">Add another salon branch</TooltipContent>
+          )}
+        </Tooltip>
       </div>
 
       <Dialog open={dialogOpen} onOpenChange={(open) => { setDialogOpen(open); if (!open) setEditingLocation(null); }}>
@@ -312,10 +344,16 @@ export default function Locations() {
                   </Button>
                 </div>
               </CardHeader>
-              <CardContent className="text-sm text-muted-foreground">
+              <CardContent className="text-sm text-muted-foreground space-y-3">
                 {loc.address && <p>{loc.address}</p>}
                 {loc.phone && <p>{loc.phone}</p>}
                 {!loc.address && !loc.phone && <p className="opacity-70">No address or phone</p>}
+                <div className="flex flex-wrap items-center gap-x-3 gap-y-1 pt-1 border-t border-border/60">
+                  <Button type="button" variant="link" className="h-auto p-0 text-sm font-medium" onClick={() => openEdit(loc)}>
+                    <Clock className="mr-1.5 h-3.5 w-3.5" />
+                    Opening hours & details
+                  </Button>
+                </div>
               </CardContent>
             </Card>
           ))}

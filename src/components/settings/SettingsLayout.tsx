@@ -58,6 +58,13 @@ export function SettingsLayout() {
                     <NavItem to="/dashboard/settings/embed">Booking widget</NavItem>
                   </div>
                 </div>
+                <div>
+                  <p className="mb-2 px-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Account</p>
+                  <div className="space-y-0.5">
+                    <NavItem to="/dashboard/settings/plans">Plan & limits</NavItem>
+                    <NavItem to="/dashboard/settings/audit">Activity log</NavItem>
+                  </div>
+                </div>
               </>
             ) : null}
           </nav>

@@ -619,6 +619,47 @@ export type Database = {
           },
         ]
       }
+      organization_audit_log: {
+        Row: {
+          action: string
+          actor_user_id: string | null
+          created_at: string
+          details: Json
+          entity_id: string | null
+          entity_type: string
+          id: string
+          organization_id: string
+        }
+        Insert: {
+          action: string
+          actor_user_id?: string | null
+          created_at?: string
+          details?: Json
+          entity_id?: string | null
+          entity_type: string
+          id?: string
+          organization_id: string
+        }
+        Update: {
+          action?: string
+          actor_user_id?: string | null
+          created_at?: string
+          details?: Json
+          entity_id?: string | null
+          entity_type?: string
+          id?: string
+          organization_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "organization_audit_log_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       organizations: {
         Row: {
           created_at: string
@@ -671,6 +712,39 @@ export type Database = {
           reminder_email_hour_before?: boolean
           slug?: string
           stripe_account_id?: string | null
+          tier?: Database["public"]["Enums"]["org_tier"]
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      plan_definitions: {
+        Row: {
+          created_at: string
+          description: string | null
+          display_name: string
+          features: Json
+          max_locations: number
+          sort_order: number
+          tier: Database["public"]["Enums"]["org_tier"]
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          description?: string | null
+          display_name: string
+          features?: Json
+          max_locations: number
+          sort_order?: number
+          tier: Database["public"]["Enums"]["org_tier"]
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          description?: string | null
+          display_name?: string
+          features?: Json
+          max_locations?: number
+          sort_order?: number
           tier?: Database["public"]["Enums"]["org_tier"]
           updated_at?: string
         }

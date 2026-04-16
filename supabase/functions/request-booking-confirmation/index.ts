@@ -364,8 +364,22 @@ serve(async (req) => {
     if (insertErr) throw new Error("Failed to create pending confirmation: " + insertErr.message);
 
     const { data: org } = await supabase.from("organizations").select("name").eq("id", organization_id).single();
-    const { data: services } = await supabase.from("services").select("name").in("id", payload.service_ids);
+    const { data: services } = await supabase.from("services").select("name, duration_minutes").in("id", payload.service_ids);
     const service_summary = services?.map((s: { name: string }) => s.name).join(", ") || "";
+    const totalDurationMin = (services ?? []).reduce(
+      (acc: number, s: { duration_minutes?: number | null }) => acc + (Number(s.duration_minutes) || 30),
+      0,
+    );
+    const startIso = String(payload.start_time);
+    const endIso = new Date(new Date(startIso).getTime() + Math.max(totalDurationMin, 5) * 60000).toISOString();
+    const { data: locRow } = await supabase
+      .from("locations")
+      .select("name, address")
+      .eq("id", location_id)
+      .maybeSingle();
+    const location_label = [locRow?.name, (locRow as { address?: string | null } | null)?.address]
+      .filter(Boolean)
+      .join(" — ");
 
     const appUrl = Deno.env.get("APP_URL") || req.headers.get("origin") || "http://localhost:8080";
     const confirmUrl = `${appUrl}/book/confirm?token=${token}`;
@@ -403,6 +417,9 @@ serve(async (req) => {
           service_summary,
           confirm_url: confirmUrl,
           release_hold_url: releaseHoldUrl,
+          start_iso: startIso,
+          end_iso: endIso,
+          location_label: location_label || undefined,
         },
       }),
     });

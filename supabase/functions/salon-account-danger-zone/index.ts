@@ -1,4 +1,5 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { deleteOrganizationScopedData } from "../_shared/deleteOrganizationScopedData.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -47,31 +48,6 @@ async function verifyCustomJWT(token: string): Promise<{ sub: string; email: str
   } catch {
     return null;
   }
-}
-
-async function deleteOrgScopedRows(admin: ReturnType<typeof createClient>, organizationId: string) {
-  await admin.from("organizations").update({ owner_default_staff_id: null }).eq("id", organizationId);
-
-  await admin.from("bookings").delete().eq("organization_id", organizationId);
-  await admin.from("pending_booking_confirmations").delete().eq("organization_id", organizationId);
-  await admin.from("confirmed_booking_customers").delete().eq("organization_id", organizationId);
-  await admin.from("customer_reminder_preferences").delete().eq("organization_id", organizationId);
-  await admin.from("organization_break_slots").delete().eq("organization_id", organizationId);
-  await admin.from("location_closure_slots").delete().eq("organization_id", organizationId);
-  await admin.from("organization_off_days").delete().eq("organization_id", organizationId);
-  await admin.from("organization_holiday_overrides").delete().eq("organization_id", organizationId);
-
-  const { data: staffIds } = await admin.from("staff").select("id").eq("organization_id", organizationId);
-  const ids = (staffIds ?? []).map((r) => r.id as string);
-  if (ids.length > 0) {
-    await admin.from("availability").delete().in("staff_id", ids);
-    await admin.from("staff_locations").delete().in("staff_id", ids);
-  }
-  await admin.from("staff_invitations").delete().eq("organization_id", organizationId);
-  await admin.from("staff").delete().eq("organization_id", organizationId);
-  await admin.from("services").delete().eq("organization_id", organizationId);
-  await admin.from("locations").delete().eq("organization_id", organizationId);
-  await admin.from("vat_rates").delete().eq("organization_id", organizationId);
 }
 
 function randomSlug(): string {
@@ -168,7 +144,7 @@ Deno.serve(async (req) => {
         });
       }
 
-      await deleteOrgScopedRows(admin, organizationId);
+      await deleteOrganizationScopedData(admin, organizationId);
 
       const newSlug = randomSlug();
       const displayName = "My salon";
@@ -190,37 +166,7 @@ Deno.serve(async (req) => {
         .eq("id", organizationId);
       if (upOrgErr) throw upOrgErr;
 
-      const { data: phStaff, error: phErr } = await admin
-        .from("staff")
-        .insert({
-          organization_id: organizationId,
-          name: `${displayName} (bookings)`,
-          user_id: caller.sub,
-          is_owner_placeholder: true,
-          is_active: true,
-        })
-        .select("id")
-        .single();
-      if (phErr || !phStaff?.id) throw phErr ?? new Error("placeholder staff");
-
-      const { error: odErr } = await admin
-        .from("organizations")
-        .update({ owner_default_staff_id: phStaff.id as string })
-        .eq("id", organizationId);
-      if (odErr) throw odErr;
-
-      const { data: loc, error: locErr } = await admin
-        .from("locations")
-        .insert({
-          organization_id: organizationId,
-          name: "Main",
-          is_active: true,
-        })
-        .select("id")
-        .single();
-      if (locErr || !loc?.id) throw locErr ?? new Error("location");
-
-      await admin.from("staff_locations").insert({ staff_id: phStaff.id as string, location_id: loc.id as string });
+      // No placeholder staff and no default location — onboarding wizard creates the first location; Staff page adds team.
 
       const { error: rpcErr } = await admin.rpc("insert_default_vat_rates_for_org", { _org_id: organizationId });
       if (rpcErr) console.error("insert_default_vat_rates_for_org", rpcErr);
@@ -234,7 +180,7 @@ Deno.serve(async (req) => {
     if (action === "delete_my_account") {
       const { data: owned } = await admin.from("organizations").select("id").eq("owner_id", caller.sub);
       for (const row of owned ?? []) {
-        await deleteOrgScopedRows(admin, row.id as string);
+        await deleteOrganizationScopedData(admin, row.id as string);
         const { error: delO } = await admin.from("organizations").delete().eq("id", row.id as string);
         if (delO) throw delO;
       }
